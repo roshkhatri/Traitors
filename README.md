@@ -18,14 +18,17 @@ offers the original same-browser demo. The demo host key is `2026`.
 
 ## How the live game works
 
-- The host selects **Start as host** on their phone, chooses the number of
-  elimination rounds, and that phone becomes the private host controller.
+- The host enters the event, who it is for, their own name, the guest list,
+  and the number of elimination rounds. That phone becomes the private host
+  controller.
 - The host uses **Pair a TV display** to open a private, read-only hall on the
   television. The pairing key is removed from the TV address after connecting.
 - The host controller shows one separate public QR code and human-readable game
   code for contestants.
 - Scanning the QR both joins the game and creates an anonymous device identity.
-- Players add a compressed photo and name. No email or password is requested.
+- Invited names appear immediately with initial placeholders. Players scan the
+  QR, choose an unclaimed name, and add a compressed photo. No email or
+  password is requested.
 - The player identity and host identity persist in their browsers.
 - The game expires 48 hours after it is created.
 - An hourly database cleanup removes expired games and deletes anonymous

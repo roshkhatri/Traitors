@@ -34,12 +34,14 @@ import {
 } from "react";
 import {
   CloudGame,
+  JoinableCloudGame,
   createCloudGame,
   ensureAnonymousSession,
   isCloudConfigured,
   joinCloudGame,
   joinCloudDisplay,
   loadCloudGame,
+  loadJoinableCloudGame,
   loadCloudPlayers,
   normalizeDisplayKey,
   normalizeGameCode,
@@ -58,6 +60,7 @@ type Player = {
   id: string;
   name: string;
   photo: string;
+  claimed?: boolean;
   status: PlayerStatus;
   eliminationRound?: number;
 };
@@ -74,10 +77,44 @@ type OnlineSession = {
   displayKey?: string;
 };
 
+type StartGameInput = {
+  hostName: string;
+  eventName: string;
+  honoree: string;
+  totalRounds: number;
+  roster: string[];
+};
+
 const PLAYER_STORAGE_KEY = "traitors-hall-players-v1";
 const SESSION_STORAGE_KEY = "traitors-hall-session-v1";
 const ONLINE_SESSION_STORAGE_KEY = "traitors-online-session-v1";
 const HOST_PIN = "2026";
+const DEFAULT_HOST_NAME = "Nishika";
+const DEFAULT_EVENT = "Birthday Party";
+const DEFAULT_HONOREE = "Anmol";
+const DEFAULT_ROSTER = [
+  "Anmol",
+  "Aryaman",
+  "Roshan",
+  "Sanski",
+  "Veenu",
+  "Gati",
+  "Mayank",
+  "Samiksha",
+  "Shreyansh",
+  "Aditi",
+  "Atharva",
+  "Utkarsha",
+  "Nikita",
+  "Siddhant",
+  "Yash",
+  "Viram",
+  "Jainam",
+  "Shwetanshu",
+  "Sabarni",
+  "Ayushi",
+  "Gunika",
+];
 
 function devLog(event: string, details?: unknown) {
   if (import.meta.env.DEV) {
@@ -248,6 +285,9 @@ function friendlyCloudError(error: unknown) {
   if (/photo|portrait|image/i.test(message)) {
     return message;
   }
+  if (/already claimed|guest list|separate contestant device/i.test(message)) {
+    return message;
+  }
   devLog("Cloud error", message);
   return "Something interrupted the game session. Please try again.";
 }
@@ -260,6 +300,20 @@ function displayPairingKey(key: string) {
   return key.length === 12
     ? `${key.slice(0, 4)}-${key.slice(4, 8)}-${key.slice(8)}`
     : key;
+}
+
+function parseRoster(value: string) {
+  return value
+    .split(/[\n,]+/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+function buildEventTitle(eventName: string, honoree: string) {
+  const event = eventName.trim();
+  const forName = honoree.trim();
+  if (event && forName) return `${event} for ${forName}`;
+  return event || forName || "The Traitors";
 }
 
 function App() {
@@ -403,10 +457,15 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
     };
   }, [game?.id, stage]);
 
-  const startGame = async (title: string, totalRounds: number) => {
+  const startGame = async (input: StartGameInput) => {
     setError("");
     try {
-      const created = await createCloudGame(title, totalRounds);
+      const created = await createCloudGame({
+        title: buildEventTitle(input.eventName, input.honoree),
+        hostName: input.hostName,
+        totalRounds: input.totalRounds,
+        roster: input.roster,
+      });
       const nextSession: OnlineSession = {
         role: "host",
         gameId: created.id,
@@ -417,8 +476,8 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
         JSON.stringify(nextSession),
       );
       setGame(created);
-      setPlayers([]);
       setSession(nextSession);
+      await refreshPlayers(created.id);
       setStage("game");
       devLog("Shared game created", { gameId: created.id });
     } catch (startError) {
@@ -763,12 +822,15 @@ function GameEntryScreen({
   onPreview,
 }: {
   error: string;
-  onStart: (title: string, totalRounds: number) => Promise<void>;
+  onStart: (input: StartGameInput) => Promise<void>;
   onJoin: (code: string) => void;
   onDisplay: () => void;
   onPreview: () => void;
 }) {
-  const [title, setTitle] = useState("Tonight at Blackthorne Manor");
+  const [hostName, setHostName] = useState(DEFAULT_HOST_NAME);
+  const [eventName, setEventName] = useState(DEFAULT_EVENT);
+  const [honoree, setHonoree] = useState(DEFAULT_HONOREE);
+  const [rosterText, setRosterText] = useState(DEFAULT_ROSTER.join("\n"));
   const [totalRounds, setTotalRounds] = useState(3);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -777,7 +839,13 @@ function GameEntryScreen({
     event.preventDefault();
     setBusy(true);
     try {
-      await onStart(title, totalRounds);
+      await onStart({
+        hostName,
+        eventName,
+        honoree,
+        totalRounds,
+        roster: parseRoster(rosterText),
+      });
     } finally {
       setBusy(false);
     }
@@ -836,13 +904,36 @@ function GameEntryScreen({
           </p>
 
           <form onSubmit={start}>
-            <div className="start-game-fields">
+            <div className="start-game-fields event-fields">
               <label className="field">
-                <span>Game title</span>
+                <span>Event</span>
                 <input
-                  value={title}
-                  maxLength={80}
-                  onChange={(event) => setTitle(event.target.value)}
+                  value={eventName}
+                  maxLength={35}
+                  onChange={(event) => setEventName(event.target.value)}
+                  placeholder="Birthday Party"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>For</span>
+                <input
+                  value={honoree}
+                  maxLength={40}
+                  onChange={(event) => setHonoree(event.target.value)}
+                  placeholder="Anmol"
+                  required
+                />
+              </label>
+            </div>
+            <div className="start-game-fields host-fields">
+              <label className="field">
+                <span>Host</span>
+                <input
+                  value={hostName}
+                  maxLength={40}
+                  onChange={(event) => setHostName(event.target.value)}
+                  placeholder="Nishika"
                   required
                 />
               </label>
@@ -867,6 +958,20 @@ function GameEntryScreen({
                 </div>
               </label>
             </div>
+            <label className="field roster-field">
+              <span>
+                Guest list <small>{parseRoster(rosterText).length} names</small>
+              </span>
+              <textarea
+                value={rosterText}
+                onChange={(event) => setRosterText(event.target.value)}
+                placeholder="One name per line"
+                rows={5}
+              />
+              <small>
+                Guests will select their name after scanning the join QR code.
+              </small>
+            </label>
             <button
               className="primary-button login-button"
               type="submit"
@@ -1016,8 +1121,35 @@ function JoinGameScreen({
   const [name, setName] = useState("");
   const [photo, setPhoto] = useState("");
   const [photoError, setPhotoError] = useState("");
+  const [joinableGame, setJoinableGame] =
+    useState<JoinableCloudGame | null>(null);
+  const [rosterError, setRosterError] = useState("");
+  const [loadingRoster, setLoadingRoster] = useState(true);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingRoster(true);
+    setRosterError("");
+    void loadJoinableCloudGame(code)
+      .then((nextGame) => {
+        if (cancelled) return;
+        setJoinableGame(nextGame);
+        setName((current) =>
+          nextGame.availableNames.includes(current) ? current : "",
+        );
+      })
+      .catch((lookupIssue) => {
+        if (!cancelled) setRosterError(friendlyCloudError(lookupIssue));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRoster(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, error]);
 
   const choosePhoto = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1033,6 +1165,10 @@ function JoinGameScreen({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (!name.trim()) {
+      setRosterError("Choose your name from the guest list.");
+      return;
+    }
     if (!photo) {
       setPhotoError("Add a portrait before entering the hall.");
       return;
@@ -1059,6 +1195,12 @@ function JoinGameScreen({
         <p className="join-code-label">
           Game <strong>{displayGameCode(code)}</strong>
         </p>
+        {joinableGame && (
+          <p className="join-event-label">
+            <strong>{joinableGame.title}</strong>
+            <span>Hosted by {joinableGame.hostName}</span>
+          </p>
+        )}
 
         <form onSubmit={submit}>
           <button
@@ -1093,21 +1235,62 @@ function JoinGameScreen({
           <div className="join-fields">
             <label className="field compact">
               <span>Your name</span>
-              <input
-                value={name}
-                maxLength={40}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="How should the hall remember you?"
-                required
-              />
+              {loadingRoster ? (
+                <div className="select-wrap">
+                  <select disabled>
+                    <option>Loading guest list…</option>
+                  </select>
+                  <ChevronDown size={17} />
+                </div>
+              ) : joinableGame?.rosterLocked ? (
+                <div className="select-wrap">
+                  <select
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    disabled={
+                      loadingRoster ||
+                      joinableGame.availableNames.length === 0
+                    }
+                    required
+                  >
+                    <option value="">
+                      {joinableGame.availableNames.length
+                        ? "Choose your name"
+                        : "All guest names are claimed"}
+                    </option>
+                    {joinableGame.availableNames.map((guestName) => (
+                      <option key={guestName} value={guestName}>
+                        {guestName}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={17} />
+                </div>
+              ) : (
+                <input
+                  value={name}
+                  maxLength={40}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="How should the hall remember you?"
+                  required
+                />
+              )}
             </label>
           </div>
 
+          {rosterError && <p className="form-error join-error">{rosterError}</p>}
           {error && <p className="form-error join-error">{error}</p>}
           <button
             className="primary-button full-button join-submit"
             type="submit"
-            disabled={busy}
+            disabled={
+              busy ||
+              loadingRoster ||
+              Boolean(
+                joinableGame?.rosterLocked &&
+                  joinableGame.availableNames.length === 0,
+              )
+            }
           >
             {busy ? "Entering the manor…" : "Enter the hall"}
             {!busy && <span>→</span>}
@@ -1448,7 +1631,7 @@ function Hall({
                     : "Playing as"}
               </small>
               {isHost
-                ? "The Host"
+                ? onlineGame?.hostName ?? "The Host"
                 : isDisplay
                   ? "TV Display"
                   : currentPlayer?.name ?? "Contestant"}
@@ -1646,7 +1829,11 @@ function Hall({
           <Crown size={18} />
         </div>
         <p>The truth always comes out in the end.</p>
-        <span>Blackthorne Manor · MMXXVI</span>
+        <span>
+          {onlineGame
+            ? `Hosted by ${onlineGame.hostName}`
+            : "Blackthorne Manor · MMXXVI"}
+        </span>
       </footer>
 
       {selected && isHost && (
@@ -1760,9 +1947,10 @@ function OnlineLobby({
         <p className="eyebrow">Scan to enter the game</p>
         <h2>Contestants, claim your portrait</h2>
         <p>
-          Open your camera, scan the code, and add your name and photo. New
-          portraits appear on this screen automatically.
+          Open your camera, scan the code, choose your name, and add your
+          photo. Portraits update on this screen automatically.
         </p>
+        <p className="lobby-host">Hosted by {game.hostName}</p>
         <div className="game-code-display">
           <span>Game code</span>
           <strong>{displayGameCode(game.code)}</strong>
@@ -1785,7 +1973,7 @@ function OnlineLobby({
         <div>
           <UsersRound size={18} />
           <strong>{playerCount}</strong>
-          <span>{playerCount === 1 ? "portrait" : "portraits"}</span>
+          <span>{playerCount === 1 ? "guest slot" : "guest slots"}</span>
         </div>
         <div>
           <Flame size={18} />
@@ -1904,6 +2092,8 @@ function PortraitCard({
   return (
     <article
       className={`portrait-card ${isFallen ? "fallen" : ""} ${
+        player.claimed === false ? "unclaimed" : ""
+      } ${
         isHost ? "host-editable" : ""
       }`}
       style={{ animationDelay: `${Math.min(index * 45, 360)}ms` }}
@@ -1920,7 +2110,9 @@ function PortraitCard({
           ) : (
             <div className="portrait-placeholder">
               <span>{player.name.slice(0, 1)}</span>
-              <small>Portrait awaiting</small>
+              <small>
+                {player.claimed === false ? "Awaiting claim" : "Portrait awaiting"}
+              </small>
             </div>
           )}
           <div className="portrait-vignette" />

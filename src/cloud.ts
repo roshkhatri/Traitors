@@ -4,6 +4,8 @@ export type CloudGame = {
   id: string;
   code: string;
   title: string;
+  hostName: string;
+  rosterLocked: boolean;
   expiresAt: string;
   currentRound: number;
   totalRounds: number;
@@ -13,8 +15,16 @@ export type CloudPlayer = {
   id: string;
   name: string;
   photo: string;
+  claimed: boolean;
   status: "active" | "banished" | "murdered" | "departed";
   eliminationRound?: number;
+};
+
+export type JoinableCloudGame = {
+  title: string;
+  hostName: string;
+  rosterLocked: boolean;
+  availableNames: string[];
 };
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
@@ -55,14 +65,18 @@ export async function ensureAnonymousSession() {
   return data.user;
 }
 
-export async function createCloudGame(
-  title: string,
-  totalRounds: number,
-): Promise<CloudGame & { displayKey: string }> {
+export async function createCloudGame(input: {
+  title: string;
+  hostName: string;
+  totalRounds: number;
+  roster: string[];
+}): Promise<CloudGame & { displayKey: string }> {
   await ensureAnonymousSession();
   const { data, error } = await client().rpc("create_game", {
-    p_title: title.trim() || "The Traitors",
-    p_total_rounds: totalRounds,
+    p_title: input.title.trim() || "The Traitors",
+    p_host_name: input.hostName.trim() || "The Host",
+    p_total_rounds: input.totalRounds,
+    p_roster: input.roster,
   });
   if (error) throw error;
 
@@ -72,10 +86,31 @@ export async function createCloudGame(
     id: row.game_id,
     code: row.game_code,
     title: row.game_title,
+    hostName: input.hostName.trim() || "The Host",
+    rosterLocked: input.roster.length > 0,
     expiresAt: row.game_expires_at,
     currentRound: row.current_round,
     totalRounds: row.total_rounds,
     displayKey: row.display_key,
+  };
+}
+
+export async function loadJoinableCloudGame(
+  code: string,
+): Promise<JoinableCloudGame> {
+  await ensureAnonymousSession();
+  const { data, error } = await client().rpc("get_joinable_game", {
+    p_code: normalizeGameCode(code),
+  });
+  if (error) throw error;
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error("This game code is invalid or has expired.");
+  return {
+    title: row.game_title,
+    hostName: row.game_host_name,
+    rosterLocked: row.roster_locked,
+    availableNames: row.available_names ?? [],
   };
 }
 
@@ -94,15 +129,10 @@ export async function joinCloudGame(input: {
 
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) throw new Error("That game could not be joined.");
+  const sharedGame = await loadCloudGame(row.game_id);
+  if (!sharedGame) throw new Error("That game has expired.");
   return {
-    game: {
-      id: row.game_id,
-      code: row.game_code,
-      title: row.game_title,
-      expiresAt: row.game_expires_at,
-      currentRound: row.current_round,
-      totalRounds: row.total_rounds,
-    },
+    game: sharedGame,
     playerId: row.player_id,
   };
 }
@@ -120,21 +150,18 @@ export async function joinCloudDisplay(input: {
 
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) throw new Error("That TV pairing code could not be used.");
-  return {
-    id: row.game_id,
-    code: row.game_code,
-    title: row.game_title,
-    expiresAt: row.game_expires_at,
-    currentRound: row.current_round,
-    totalRounds: row.total_rounds,
-  };
+  const sharedGame = await loadCloudGame(row.game_id);
+  if (!sharedGame) throw new Error("That game has expired.");
+  return sharedGame;
 }
 
 export async function loadCloudGame(gameId: string): Promise<CloudGame | null> {
   await ensureAnonymousSession();
   const { data, error } = await client()
     .from("games")
-    .select("id, code, title, expires_at, current_round, total_rounds")
+    .select(
+      "id, code, title, host_name, roster_locked, expires_at, current_round, total_rounds",
+    )
     .eq("id", gameId)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
@@ -144,6 +171,8 @@ export async function loadCloudGame(gameId: string): Promise<CloudGame | null> {
     id: data.id,
     code: data.code,
     title: data.title,
+    hostName: data.host_name,
+    rosterLocked: data.roster_locked,
     expiresAt: data.expires_at,
     currentRound: data.current_round,
     totalRounds: data.total_rounds,
@@ -153,14 +182,18 @@ export async function loadCloudGame(gameId: string): Promise<CloudGame | null> {
 export async function loadCloudPlayers(gameId: string): Promise<CloudPlayer[]> {
   const { data, error } = await client()
     .from("players")
-    .select("id, name, photo_data, status, elimination_round, joined_at")
+    .select(
+      "id, name, photo_data, status, elimination_round, sort_order, claimed_at, joined_at",
+    )
     .eq("game_id", gameId)
+    .order("sort_order", { ascending: true })
     .order("joined_at", { ascending: true });
   if (error) throw error;
   return (data ?? []).map((row) => ({
     id: row.id,
     name: row.name,
-    photo: row.photo_data,
+    photo: row.photo_data ?? "",
+    claimed: Boolean(row.claimed_at),
     status: row.status,
     eliminationRound: row.elimination_round ?? undefined,
   }));

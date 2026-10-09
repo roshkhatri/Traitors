@@ -36,7 +36,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -47,7 +48,8 @@ select {
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible {
   outline: 2px solid #e8c77e;
   outline-offset: 3px;
 }
@@ -361,15 +363,27 @@ button {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   width: 100%;
-  height: 49px;
   padding: 0 15px;
   color: #f0dfbf;
   background: rgba(7, 3, 2, 0.44);
   border: 1px solid rgba(211, 175, 101, 0.2);
   border-radius: 0;
   appearance: none;
+}
+
+.field input,
+.field select {
+  height: 49px;
+}
+
+.field textarea {
+  min-height: 104px;
+  padding: 12px 15px;
+  line-height: 1.45;
+  resize: vertical;
 }
 
 .field input::placeholder {
@@ -1616,13 +1630,34 @@ footer span {
 }
 
 .game-entry-panel {
+  max-height: calc(100vh - 70px);
   padding-top: 48px;
+  overflow-y: auto;
 }
 
 .start-game-fields {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 105px;
   gap: 10px;
+}
+
+.start-game-fields.event-fields {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr);
+}
+
+.start-game-fields.host-fields,
+.roster-field {
+  margin-top: 12px;
+}
+
+.roster-field > span {
+  display: flex;
+  justify-content: space-between;
+}
+
+.roster-field > span small {
+  color: #7d6a53;
+  font-weight: 500;
 }
 
 .round-count-field select {
@@ -1828,6 +1863,24 @@ footer span {
   letter-spacing: 0.13em;
 }
 
+.join-event-label {
+  display: grid;
+  gap: 4px;
+  margin: -13px 0 23px;
+  color: #a78f67;
+  font-size: 0.67rem;
+}
+
+.join-event-label strong {
+  color: #d9be82;
+  font-family: "Cormorant Garamond", serif;
+  font-size: 1.1rem;
+}
+
+.join-event-label span {
+  color: #76634d;
+}
+
 .portrait-picker {
   position: relative;
   display: grid;
@@ -1950,6 +2003,13 @@ footer span {
   color: #ebdaba;
   font-family: "Cormorant Garamond", serif;
   font-size: clamp(1.7rem, 3vw, 2.35rem);
+  font-weight: 600;
+}
+
+.lobby-host {
+  margin-top: 8px !important;
+  color: #b99b63 !important;
+  font-size: 0.65rem !important;
   font-weight: 600;
 }
 
@@ -2337,6 +2397,10 @@ footer span {
     width: min(100%, 470px);
   }
 
+  .game-entry-panel {
+    max-height: none;
+  }
+
   .site-header {
     padding: 0 20px;
   }
@@ -2408,6 +2472,10 @@ footer span {
   }
 
   .start-game-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .start-game-fields.event-fields {
     grid-template-columns: 1fr;
   }
 
