@@ -18,19 +18,29 @@ offers the original same-browser demo. The demo host key is `2026`.
 
 ## How the live game works
 
-- The host selects **Start as host**. That browser becomes the host controller.
-- The projected hall shows one public QR code and a human-readable game code.
+- The host selects **Start as host** on their phone, chooses the number of
+  elimination rounds, and that phone becomes the private host controller.
+- The host uses **Pair a TV display** to open a private, read-only hall on the
+  television. The pairing key is removed from the TV address after connecting.
+- The host controller shows one separate public QR code and human-readable game
+  code for contestants.
 - Scanning the QR both joins the game and creates an anonymous device identity.
 - Players add a compressed photo and name. No email or password is requested.
 - The player identity and host identity persist in their browsers.
 - The game expires 48 hours after it is created.
 - Supabase Realtime updates the projected hall as players join or change photos.
+- The host selects the active elimination round from the phone. The TV displays
+  “Round X of Y,” and each crossed portrait records the round it happened.
 - The host can enable TV mode to hide setup panels and fit the full cast into
   an adaptive fullscreen grid.
 
-A second public authentication QR is intentionally not used. If host controls
-are later needed on another device, the safer design is a private, single-use
-host-pairing QR that expires quickly.
+The two codes have deliberately different permissions:
+
+- **Player QR:** public; allows joining and editing only that player’s photo.
+- **TV pairing link/key:** private; allows viewing the live hall but cannot
+  change a portrait or contestant fate.
+
+Host permissions never leave the phone that created the game.
 
 ## Free shared database setup
 

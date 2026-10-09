@@ -719,6 +719,53 @@ button {
   gap: 13px;
 }
 
+.round-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.round-selector > span {
+  flex: 0 0 auto;
+  color: #756451;
+  font-size: 0.54rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.round-selector > div {
+  display: flex;
+  max-width: min(38vw, 390px);
+  overflow-x: auto;
+  padding: 2px;
+  gap: 4px;
+  scrollbar-width: thin;
+}
+
+.round-selector button {
+  display: grid;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  color: #76644d;
+  background: rgba(7, 3, 2, 0.32);
+  border: 1px solid rgba(211, 175, 101, 0.16);
+  font-family: "Cormorant Garamond", serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.round-selector button.active {
+  color: #f0d58e;
+  background: #751518;
+  border-color: #b98d48;
+  box-shadow: 0 0 15px rgba(143, 27, 25, 0.25);
+}
+
 .secondary-button {
   min-height: 40px;
   color: #dfc586;
@@ -1572,6 +1619,16 @@ footer span {
   padding-top: 48px;
 }
 
+.start-game-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 105px;
+  gap: 10px;
+}
+
+.round-count-field select {
+  text-align: center;
+}
+
 .entry-divider {
   display: flex;
   align-items: center;
@@ -1626,6 +1683,28 @@ footer span {
 
 .preview-link:hover {
   color: #b19766;
+}
+
+.display-entry-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 39px;
+  margin-top: 17px;
+  color: #ad9469;
+  background: rgba(6, 3, 2, 0.22);
+  border: 1px solid rgba(211, 175, 101, 0.16);
+  font-size: 0.59rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.display-entry-link:hover {
+  color: #e0c583;
+  border-color: rgba(211, 175, 101, 0.36);
 }
 
 .join-page {
@@ -1717,6 +1796,23 @@ footer span {
   font-size: 2.8rem;
   font-weight: 600;
   line-height: 0.95;
+}
+
+.display-connect-copy {
+  margin: 16px 0 25px;
+  color: #897761;
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.display-connect-card .join-fields {
+  gap: 4px;
+}
+
+.display-connect-card input {
+  font-family: "DM Sans", sans-serif;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
 }
 
 .join-code-label {
@@ -1898,9 +1994,30 @@ footer span {
   font-weight: 700;
 }
 
+.pair-tv-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  margin-top: 14px;
+  color: #d1b574;
+  background: rgba(104, 23, 22, 0.3);
+  border: 1px solid rgba(211, 175, 101, 0.29);
+  font-size: 0.56rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pair-tv-button:hover {
+  color: #f0d591;
+  border-color: rgba(222, 182, 101, 0.56);
+}
+
 .lobby-status {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 9px;
   min-width: 190px;
 }
@@ -1971,6 +2088,49 @@ footer span {
   background: rgba(105, 22, 20, 0.26);
   border: 1px solid rgba(196, 69, 56, 0.34);
   font-size: 0.65rem;
+}
+
+.display-pair-content {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 27px;
+  margin: 29px 0 25px;
+  padding: 20px;
+  background: rgba(4, 2, 1, 0.25);
+  border: 1px solid rgba(211, 175, 101, 0.16);
+}
+
+.display-pair-qr {
+  display: grid;
+  padding: 7px;
+  place-items: center;
+  background: #f4e7ca;
+  border: 1px solid #c89e51;
+}
+
+.display-pair-codes {
+  display: grid;
+}
+
+.display-pair-codes span {
+  margin-bottom: 4px;
+  color: #71604d;
+  font-size: 0.52rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.display-pair-codes strong {
+  margin-bottom: 19px;
+  color: #ebce87;
+  font-family: "Cormorant Garamond", serif;
+  font-size: 1.35rem;
+  letter-spacing: 0.11em;
+}
+
+.display-pair-codes strong:last-child {
+  margin-bottom: 0;
 }
 
 .tv-mode {
@@ -2208,6 +2368,12 @@ footer span {
     align-items: flex-start;
     flex-wrap: wrap;
   }
+
+  .display-pair-content {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
 }
 
 @media (max-width: 560px) {
@@ -2238,6 +2404,10 @@ footer span {
   }
 
   .join-code-form {
+    grid-template-columns: 1fr;
+  }
+
+  .start-game-fields {
     grid-template-columns: 1fr;
   }
 
@@ -2298,7 +2468,7 @@ footer span {
   .lobby-status {
     display: grid;
     grid-column: auto;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     width: 100%;
   }
 
@@ -2311,6 +2481,17 @@ footer span {
     justify-content: space-between;
     width: 100%;
     padding-top: 7px;
+  }
+
+  .round-selector {
+    align-items: flex-start;
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .round-selector > div {
+    width: 100%;
+    max-width: none;
   }
 
   .gallery-section {

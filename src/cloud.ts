@@ -5,6 +5,8 @@ export type CloudGame = {
   code: string;
   title: string;
   expiresAt: string;
+  currentRound: number;
+  totalRounds: number;
 };
 
 export type CloudPlayer = {
@@ -12,6 +14,7 @@ export type CloudPlayer = {
   name: string;
   photo: string;
   status: "active" | "banished" | "murdered" | "departed";
+  eliminationRound?: number;
 };
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
@@ -52,10 +55,14 @@ export async function ensureAnonymousSession() {
   return data.user;
 }
 
-export async function createCloudGame(title: string): Promise<CloudGame> {
+export async function createCloudGame(
+  title: string,
+  totalRounds: number,
+): Promise<CloudGame & { displayKey: string }> {
   await ensureAnonymousSession();
   const { data, error } = await client().rpc("create_game", {
     p_title: title.trim() || "The Traitors",
+    p_total_rounds: totalRounds,
   });
   if (error) throw error;
 
@@ -66,6 +73,9 @@ export async function createCloudGame(title: string): Promise<CloudGame> {
     code: row.game_code,
     title: row.game_title,
     expiresAt: row.game_expires_at,
+    currentRound: row.current_round,
+    totalRounds: row.total_rounds,
+    displayKey: row.display_key,
   };
 }
 
@@ -90,8 +100,33 @@ export async function joinCloudGame(input: {
       code: row.game_code,
       title: row.game_title,
       expiresAt: row.game_expires_at,
+      currentRound: row.current_round,
+      totalRounds: row.total_rounds,
     },
     playerId: row.player_id,
+  };
+}
+
+export async function joinCloudDisplay(input: {
+  code: string;
+  displayKey: string;
+}): Promise<CloudGame> {
+  await ensureAnonymousSession();
+  const { data, error } = await client().rpc("join_display", {
+    p_code: normalizeGameCode(input.code),
+    p_display_key: normalizeDisplayKey(input.displayKey),
+  });
+  if (error) throw error;
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error("That TV pairing code could not be used.");
+  return {
+    id: row.game_id,
+    code: row.game_code,
+    title: row.game_title,
+    expiresAt: row.game_expires_at,
+    currentRound: row.current_round,
+    totalRounds: row.total_rounds,
   };
 }
 
@@ -99,7 +134,7 @@ export async function loadCloudGame(gameId: string): Promise<CloudGame | null> {
   await ensureAnonymousSession();
   const { data, error } = await client()
     .from("games")
-    .select("id, code, title, expires_at")
+    .select("id, code, title, expires_at, current_round, total_rounds")
     .eq("id", gameId)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
@@ -110,13 +145,15 @@ export async function loadCloudGame(gameId: string): Promise<CloudGame | null> {
     code: data.code,
     title: data.title,
     expiresAt: data.expires_at,
+    currentRound: data.current_round,
+    totalRounds: data.total_rounds,
   };
 }
 
 export async function loadCloudPlayers(gameId: string): Promise<CloudPlayer[]> {
   const { data, error } = await client()
     .from("players")
-    .select("id, name, photo_data, status, joined_at")
+    .select("id, name, photo_data, status, elimination_round, joined_at")
     .eq("game_id", gameId)
     .order("joined_at", { ascending: true });
   if (error) throw error;
@@ -125,6 +162,7 @@ export async function loadCloudPlayers(gameId: string): Promise<CloudPlayer[]> {
     name: row.name,
     photo: row.photo_data,
     status: row.status,
+    eliminationRound: row.elimination_round ?? undefined,
   }));
 }
 
@@ -146,6 +184,17 @@ export async function updateCloudFate(input: {
   const { error } = await client().rpc("host_update_fate", {
     p_player_id: input.playerId,
     p_status: input.status,
+  });
+  if (error) throw error;
+}
+
+export async function updateCloudRound(
+  gameId: string,
+  round: number,
+): Promise<void> {
+  const { error } = await client().rpc("host_set_round", {
+    p_game_id: gameId,
+    p_round: round,
   });
   if (error) throw error;
 }
@@ -189,4 +238,8 @@ export function subscribeToCloudPlayers(
 
 export function normalizeGameCode(code: string) {
   return code.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+}
+
+export function normalizeDisplayKey(key: string) {
+  return key.toUpperCase().replace(/[^A-F0-9]/g, "").slice(0, 12);
 }

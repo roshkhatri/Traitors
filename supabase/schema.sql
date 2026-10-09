@@ -9,17 +9,44 @@ create table if not exists public.games (
   code text not null unique,
   title text not null check (char_length(title) between 1 and 80),
   host_user_id uuid not null references auth.users(id) on delete cascade,
+  display_key_hash text,
+  current_round smallint not null default 1,
+  total_rounds smallint not null default 3,
   created_at timestamptz not null default now(),
-  expires_at timestamptz not null default (now() + interval '48 hours')
+  expires_at timestamptz not null default (now() + interval '48 hours'),
+  constraint games_rounds_check
+    check (
+      total_rounds between 1 and 10
+      and current_round between 1 and total_rounds
+    )
 );
+
+alter table public.games add column if not exists display_key_hash text;
+alter table public.games
+  add column if not exists current_round smallint not null default 1;
+alter table public.games
+  add column if not exists total_rounds smallint not null default 3;
+alter table public.games drop constraint if exists games_rounds_check;
+alter table public.games
+  add constraint games_rounds_check
+  check (
+    total_rounds between 1 and 10
+    and current_round between 1 and total_rounds
+  );
 
 create table if not exists public.game_members (
   game_id uuid not null references public.games(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
-  role text not null check (role in ('host', 'player')),
+  role text not null check (role in ('host', 'player', 'display')),
   joined_at timestamptz not null default now(),
   primary key (game_id, user_id)
 );
+
+alter table public.game_members
+  drop constraint if exists game_members_role_check;
+alter table public.game_members
+  add constraint game_members_role_check
+  check (role in ('host', 'player', 'display'));
 
 create table if not exists public.players (
   id uuid primary key default gen_random_uuid(),
@@ -29,11 +56,20 @@ create table if not exists public.players (
   photo_data text not null check (char_length(photo_data) between 50 and 600000),
   status text not null default 'active'
     check (status in ('active', 'banished', 'murdered', 'departed')),
+  elimination_round smallint
+    check (elimination_round is null or elimination_round between 1 and 10),
   joined_at timestamptz not null default now(),
   unique (game_id, user_id)
 );
 
 alter table public.players drop column if exists exit_round;
+alter table public.players
+  add column if not exists elimination_round smallint;
+alter table public.players
+  drop constraint if exists players_elimination_round_check;
+alter table public.players
+  add constraint players_elimination_round_check
+  check (elimination_round is null or elimination_round between 1 and 10);
 
 alter table public.games enable row level security;
 alter table public.game_members enable row level security;
@@ -77,7 +113,10 @@ using (
 revoke all on public.games from anon, authenticated;
 revoke all on public.game_members from anon, authenticated;
 revoke all on public.players from anon, authenticated;
-grant select on public.games to authenticated;
+grant select (
+  id, code, title, current_round, total_rounds, created_at, expires_at
+)
+  on public.games to authenticated;
 grant select on public.game_members to authenticated;
 grant select on public.players to authenticated;
 
@@ -90,12 +129,21 @@ as $$
   select upper(substr(encode(extensions.gen_random_bytes(6), 'hex'), 1, 8));
 $$;
 
-create or replace function public.create_game(p_title text)
+drop function if exists public.create_game(text);
+drop function if exists public.create_game(text, integer);
+
+create or replace function public.create_game(
+  p_title text,
+  p_total_rounds integer
+)
 returns table (
   game_id uuid,
   game_code text,
   game_title text,
-  game_expires_at timestamptz
+  game_expires_at timestamptz,
+  current_round integer,
+  total_rounds integer,
+  display_key text
 )
 language plpgsql
 security definer
@@ -104,6 +152,7 @@ as $$
 declare
   created_game public.games;
   next_code text;
+  next_display_key text;
 begin
   if auth.uid() is null then
     raise exception 'A valid session is required';
@@ -116,12 +165,32 @@ begin
   if char_length(trim(p_title)) not between 1 and 80 then
     raise exception 'Game title must be between 1 and 80 characters';
   end if;
+  if p_total_rounds not between 1 and 10 then
+    raise exception 'The number of elimination rounds must be between 1 and 10';
+  end if;
 
   loop
     next_code := public.make_game_code();
+    next_display_key := upper(
+      substr(encode(extensions.gen_random_bytes(8), 'hex'), 1, 12)
+    );
     begin
-      insert into public.games (code, title, host_user_id)
-      values (next_code, trim(p_title), auth.uid())
+      insert into public.games (
+        code,
+        title,
+        host_user_id,
+        display_key_hash,
+        current_round,
+        total_rounds
+      )
+      values (
+        next_code,
+        trim(p_title),
+        auth.uid(),
+        encode(extensions.digest(next_display_key, 'sha256'), 'hex'),
+        1,
+        p_total_rounds
+      )
       returning * into created_game;
       exit;
     exception when unique_violation then
@@ -133,9 +202,18 @@ begin
   values (created_game.id, auth.uid(), 'host');
 
   return query
-  select created_game.id, created_game.code, created_game.title, created_game.expires_at;
+  select
+    created_game.id,
+    created_game.code,
+    created_game.title,
+    created_game.expires_at,
+    created_game.current_round::integer,
+    created_game.total_rounds::integer,
+    next_display_key;
 end;
 $$;
+
+drop function if exists public.join_game(text, text, text);
 
 create or replace function public.join_game(
   p_code text,
@@ -147,6 +225,8 @@ returns table (
   game_code text,
   game_title text,
   game_expires_at timestamptz,
+  current_round integer,
+  total_rounds integer,
   player_id uuid
 )
 language plpgsql
@@ -205,7 +285,72 @@ begin
     target_game.code,
     target_game.title,
     target_game.expires_at,
+    target_game.current_round::integer,
+    target_game.total_rounds::integer,
     joined_player.id;
+end;
+$$;
+
+drop function if exists public.join_display(text, text);
+
+create or replace function public.join_display(
+  p_code text,
+  p_display_key text
+)
+returns table (
+  game_id uuid,
+  game_code text,
+  game_title text,
+  game_expires_at timestamptz,
+  current_round integer,
+  total_rounds integer
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  target_game public.games;
+  normalized_key text;
+begin
+  if auth.uid() is null then
+    raise exception 'A valid session is required';
+  end if;
+
+  normalized_key := upper(
+    regexp_replace(p_display_key, '[^A-F0-9]', '', 'g')
+  );
+  if char_length(normalized_key) <> 12 then
+    raise exception 'The TV pairing key is invalid';
+  end if;
+
+  select *
+  into target_game
+  from public.games
+  where code = upper(regexp_replace(p_code, '[^A-Z0-9]', '', 'g'))
+    and display_key_hash = encode(
+      extensions.digest(normalized_key, 'sha256'),
+      'hex'
+    )
+    and expires_at > now();
+
+  if target_game.id is null then
+    raise exception 'The game code or TV pairing key is invalid or expired';
+  end if;
+
+  insert into public.game_members (game_id, user_id, role)
+  values (target_game.id, auth.uid(), 'display')
+  on conflict (game_id, user_id)
+  do update set role = excluded.role;
+
+  return query
+  select
+    target_game.id,
+    target_game.code,
+    target_game.title,
+    target_game.expires_at,
+    target_game.current_round::integer,
+    target_game.total_rounds::integer;
 end;
 $$;
 
@@ -292,7 +437,12 @@ begin
     raise exception 'Invalid contestant status';
   end if;
   update public.players player
-  set status = p_status
+  set
+    status = p_status,
+    elimination_round = case
+      when p_status = 'active' then null
+      else game.current_round
+    end
   from public.games game
   where player.id = p_player_id
     and game.id = player.game_id
@@ -305,18 +455,49 @@ begin
 end;
 $$;
 
+create or replace function public.host_set_round(
+  p_game_id uuid,
+  p_round integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'A valid session is required';
+  end if;
+
+  update public.games game
+  set current_round = p_round
+  where game.id = p_game_id
+    and game.host_user_id = auth.uid()
+    and game.expires_at > now()
+    and p_round between 1 and game.total_rounds;
+
+  if not found then
+    raise exception 'Round is invalid or host permission was denied';
+  end if;
+end;
+$$;
+
 revoke all on function public.make_game_code() from public;
-revoke all on function public.create_game(text) from public;
+revoke all on function public.create_game(text, integer) from public;
 revoke all on function public.join_game(text, text, text) from public;
+revoke all on function public.join_display(text, text) from public;
 revoke all on function public.update_my_portrait(uuid, text) from public;
 revoke all on function public.host_update_portrait(uuid, text) from public;
 revoke all on function public.host_update_fate(uuid, text) from public;
+revoke all on function public.host_set_round(uuid, integer) from public;
 
-grant execute on function public.create_game(text) to authenticated;
+grant execute on function public.create_game(text, integer) to authenticated;
 grant execute on function public.join_game(text, text, text) to authenticated;
+grant execute on function public.join_display(text, text) to authenticated;
 grant execute on function public.update_my_portrait(uuid, text) to authenticated;
 grant execute on function public.host_update_portrait(uuid, text) to authenticated;
 grant execute on function public.host_update_fate(uuid, text) to authenticated;
+grant execute on function public.host_set_round(uuid, integer) to authenticated;
 
 -- Realtime listens only return rows allowed by the SELECT policies above.
 do $$

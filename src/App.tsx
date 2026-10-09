@@ -38,17 +38,20 @@ import {
   ensureAnonymousSession,
   isCloudConfigured,
   joinCloudGame,
+  joinCloudDisplay,
   loadCloudGame,
   loadCloudPlayers,
+  normalizeDisplayKey,
   normalizeGameCode,
   subscribeToCloudPlayers,
   updateCloudFate,
+  updateCloudRound,
   updateHostCloudPortrait,
   updateMyCloudPortrait,
 } from "./cloud";
 
 type PlayerStatus = "active" | "banished" | "murdered" | "departed";
-type Role = "host" | "player";
+type Role = "host" | "player" | "display";
 type Filter = "all" | "active" | "fallen";
 
 type Player = {
@@ -56,6 +59,7 @@ type Player = {
   name: string;
   photo: string;
   status: PlayerStatus;
+  eliminationRound?: number;
 };
 
 type Session = {
@@ -67,6 +71,7 @@ type OnlineSession = {
   role: Role;
   gameId: string;
   playerId?: string;
+  displayKey?: string;
 };
 
 const PLAYER_STORAGE_KEY = "traitors-hall-players-v1";
@@ -95,6 +100,7 @@ const seedPlayers: Player[] = [
     name: "Theo",
     photo: portrait("photo-1500648767791-00dcc994a43e"),
     status: "banished",
+    eliminationRound: 1,
   },
   {
     id: "celeste",
@@ -113,6 +119,7 @@ const seedPlayers: Player[] = [
     name: "Imani",
     photo: portrait("photo-1531123897727-8f129e1688ce"),
     status: "murdered",
+    eliminationRound: 1,
   },
   {
     id: "finn",
@@ -131,6 +138,7 @@ const seedPlayers: Player[] = [
     name: "Arjun",
     photo: portrait("photo-1504593811423-6dd665756598"),
     status: "banished",
+    eliminationRound: 2,
   },
   {
     id: "rowan",
@@ -149,6 +157,7 @@ const seedPlayers: Player[] = [
     name: "Sabine",
     photo: portrait("photo-1524250502761-1ac6f2e30d43"),
     status: "departed",
+    eliminationRound: 3,
   },
   {
     id: "gabriel",
@@ -215,10 +224,20 @@ function buildJoinUrl(code: string) {
   return url.toString();
 }
 
+function buildDisplayUrl(code: string, displayKey: string) {
+  const url = new URL(import.meta.env.BASE_URL, window.location.origin);
+  url.searchParams.set("display", code);
+  url.searchParams.set("key", displayKey);
+  return url.toString();
+}
+
 function friendlyCloudError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (/invalid or has expired/i.test(message)) {
     return "That game code is invalid or the 48-hour session has expired.";
+  }
+  if (/pairing key|TV pairing/i.test(message)) {
+    return "The game code or private TV pairing key is incorrect or expired.";
   }
   if (/anonymous sign-ins/i.test(message)) {
     return "Anonymous game access is not enabled in Supabase yet.";
@@ -237,6 +256,12 @@ function displayGameCode(code: string) {
   return code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
 }
 
+function displayPairingKey(key: string) {
+  return key.length === 12
+    ? `${key.slice(0, 4)}-${key.slice(4, 8)}-${key.slice(8)}`
+    : key;
+}
+
 function App() {
   const [showOfflinePreview, setShowOfflinePreview] = useState(false);
 
@@ -251,8 +276,14 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
   const initialCode = normalizeGameCode(
     new URLSearchParams(window.location.search).get("game") ?? "",
   );
+  const initialDisplayCode = normalizeGameCode(
+    new URLSearchParams(window.location.search).get("display") ?? "",
+  );
+  const initialDisplayKey = normalizeDisplayKey(
+    new URLSearchParams(window.location.search).get("key") ?? "",
+  );
   const [stage, setStage] = useState<
-    "loading" | "setup" | "entry" | "join" | "game"
+    "loading" | "setup" | "entry" | "join" | "display" | "game"
   >(isCloudConfigured ? "loading" : "setup");
   const [game, setGame] = useState<CloudGame | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -266,6 +297,15 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
     setPlayers(nextPlayers);
   };
 
+  const refreshSharedGame = async (gameId: string) => {
+    const [nextGame, nextPlayers] = await Promise.all([
+      loadCloudGame(gameId),
+      loadCloudPlayers(gameId),
+    ]);
+    if (nextGame) setGame(nextGame);
+    setPlayers(nextPlayers);
+  };
+
   useEffect(() => {
     if (!isCloudConfigured) return;
 
@@ -273,6 +313,30 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
     const boot = async () => {
       try {
         await ensureAnonymousSession();
+        if (initialDisplayCode && initialDisplayKey) {
+          const displayGame = await joinCloudDisplay({
+            code: initialDisplayCode,
+            displayKey: initialDisplayKey,
+          });
+          if (!cancelled) {
+            const displaySession: OnlineSession = {
+              role: "display",
+              gameId: displayGame.id,
+            };
+            localStorage.setItem(
+              ONLINE_SESSION_STORAGE_KEY,
+              JSON.stringify(displaySession),
+            );
+            const cleanUrl = new URL(window.location.href);
+            cleanUrl.searchParams.delete("key");
+            window.history.replaceState({}, "", cleanUrl);
+            setGame(displayGame);
+            setSession(displaySession);
+            await refreshPlayers(displayGame.id);
+            if (!cancelled) setStage("game");
+          }
+          return;
+        }
         const saved = readStored<OnlineSession | null>(
           ONLINE_SESSION_STORAGE_KEY,
           null,
@@ -288,11 +352,25 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
           }
           localStorage.removeItem(ONLINE_SESSION_STORAGE_KEY);
         }
-        if (!cancelled) setStage(initialCode ? "join" : "entry");
+        if (!cancelled) {
+          setStage(
+            initialCode
+              ? "join"
+              : initialDisplayCode
+                ? "display"
+                : "entry",
+          );
+        }
       } catch (bootError) {
         if (!cancelled) {
           setError(friendlyCloudError(bootError));
-          setStage(initialCode ? "join" : "entry");
+          setStage(
+            initialCode
+              ? "join"
+              : initialDisplayCode
+                ? "display"
+                : "entry",
+          );
         }
       }
     };
@@ -304,20 +382,35 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
 
   useEffect(() => {
     if (stage !== "game" || !game) return;
-    return subscribeToCloudPlayers(game.id, () => {
-      void refreshPlayers(game.id).catch((refreshError) =>
+    const unsubscribe = subscribeToCloudPlayers(game.id, () => {
+      void refreshSharedGame(game.id).catch((refreshError) =>
         setSyncError(friendlyCloudError(refreshError)),
       );
     });
+    const roundPoll = window.setInterval(() => {
+      void loadCloudGame(game.id)
+        .then((nextGame) => {
+          if (nextGame) setGame(nextGame);
+        })
+        .catch((refreshError) =>
+          setSyncError(friendlyCloudError(refreshError)),
+        );
+    }, 3000);
+
+    return () => {
+      unsubscribe();
+      window.clearInterval(roundPoll);
+    };
   }, [game?.id, stage]);
 
-  const startGame = async (title: string) => {
+  const startGame = async (title: string, totalRounds: number) => {
     setError("");
     try {
-      const created = await createCloudGame(title);
+      const created = await createCloudGame(title, totalRounds);
       const nextSession: OnlineSession = {
         role: "host",
         gameId: created.id,
+        displayKey: created.displayKey,
       };
       localStorage.setItem(
         ONLINE_SESSION_STORAGE_KEY,
@@ -379,10 +472,34 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
     setStage("join");
   };
 
+  const connectDisplay = async (code: string, displayKey: string) => {
+    setError("");
+    try {
+      const connectedGame = await joinCloudDisplay({ code, displayKey });
+      const displaySession: OnlineSession = {
+        role: "display",
+        gameId: connectedGame.id,
+      };
+      localStorage.setItem(
+        ONLINE_SESSION_STORAGE_KEY,
+        JSON.stringify(displaySession),
+      );
+      setGame(connectedGame);
+      setSession(displaySession);
+      await refreshPlayers(connectedGame.id);
+      setStage("game");
+      devLog("TV display paired", { gameId: connectedGame.id });
+    } catch (displayError) {
+      setError(friendlyCloudError(displayError));
+    }
+  };
+
   const leaveGame = () => {
     localStorage.removeItem(ONLINE_SESSION_STORAGE_KEY);
     const url = new URL(window.location.href);
     url.searchParams.delete("game");
+    url.searchParams.delete("display");
+    url.searchParams.delete("key");
     window.history.replaceState({}, "", url);
     setGame(null);
     setPlayers([]);
@@ -398,7 +515,8 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
       return (
         previous &&
         (previous.photo !== next.photo ||
-          previous.status !== next.status)
+          previous.status !== next.status ||
+          previous.eliminationRound !== next.eliminationRound)
       );
     });
 
@@ -419,7 +537,8 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
       }
       if (
         session.role === "host" &&
-        previous.status !== next.status
+        (previous.status !== next.status ||
+          previous.eliminationRound !== next.eliminationRound)
       ) {
         tasks.push(
           updateCloudFate({
@@ -437,6 +556,19 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
     });
   };
 
+  const changeRound = async (round: number) => {
+    if (!game || session?.role !== "host") return;
+    const previousRound = game.currentRound;
+    setGame({ ...game, currentRound: round });
+    setSyncError("");
+    try {
+      await updateCloudRound(game.id, round);
+    } catch (roundError) {
+      setGame({ ...game, currentRound: previousRound });
+      setSyncError(friendlyCloudError(roundError));
+    }
+  };
+
   if (stage === "setup") {
     return <CloudSetupScreen onPreview={onPreview} />;
   }
@@ -451,6 +583,10 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
         error={error}
         onStart={startGame}
         onJoin={openJoin}
+        onDisplay={() => {
+          setError("");
+          setStage("display");
+        }}
         onPreview={onPreview}
       />
     );
@@ -462,6 +598,20 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
         code={joinCode}
         error={error}
         onJoin={joinGame}
+        onBack={() => {
+          setError("");
+          setStage("entry");
+        }}
+      />
+    );
+  }
+
+  if (stage === "display") {
+    return (
+      <DisplayConnectScreen
+        initialCode={initialDisplayCode}
+        error={error}
+        onConnect={connectDisplay}
         onBack={() => {
           setError("");
           setStage("entry");
@@ -483,7 +633,14 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
       onlineGame={{
         ...game,
         joinUrl: buildJoinUrl(game.code),
+        displayUrl:
+          session.role === "host" && session.displayKey
+            ? buildDisplayUrl(game.code, session.displayKey)
+            : undefined,
+        displayKey:
+          session.role === "host" ? session.displayKey : undefined,
       }}
+      onRoundChange={session.role === "host" ? changeRound : undefined}
       syncError={syncError}
     />
   );
@@ -602,14 +759,17 @@ function GameEntryScreen({
   error,
   onStart,
   onJoin,
+  onDisplay,
   onPreview,
 }: {
   error: string;
-  onStart: (title: string) => Promise<void>;
+  onStart: (title: string, totalRounds: number) => Promise<void>;
   onJoin: (code: string) => void;
+  onDisplay: () => void;
   onPreview: () => void;
 }) {
   const [title, setTitle] = useState("Tonight at Blackthorne Manor");
+  const [totalRounds, setTotalRounds] = useState(3);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -617,7 +777,7 @@ function GameEntryScreen({
     event.preventDefault();
     setBusy(true);
     try {
-      await onStart(title);
+      await onStart(title, totalRounds);
     } finally {
       setBusy(false);
     }
@@ -676,15 +836,37 @@ function GameEntryScreen({
           </p>
 
           <form onSubmit={start}>
-            <label className="field">
-              <span>Game title</span>
-              <input
-                value={title}
-                maxLength={80}
-                onChange={(event) => setTitle(event.target.value)}
-                required
-              />
-            </label>
+            <div className="start-game-fields">
+              <label className="field">
+                <span>Game title</span>
+                <input
+                  value={title}
+                  maxLength={80}
+                  onChange={(event) => setTitle(event.target.value)}
+                  required
+                />
+              </label>
+              <label className="field round-count-field">
+                <span>Elimination rounds</span>
+                <div className="select-wrap">
+                  <select
+                    value={totalRounds}
+                    onChange={(event) =>
+                      setTotalRounds(Number(event.target.value))
+                    }
+                  >
+                    {Array.from({ length: 10 }, (_, index) => index + 1).map(
+                      (rounds) => (
+                        <option key={rounds} value={rounds}>
+                          {rounds}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                  <ChevronDown size={17} />
+                </div>
+              </label>
+            </div>
             <button
               className="primary-button login-button"
               type="submit"
@@ -717,11 +899,102 @@ function GameEntryScreen({
           </form>
 
           {error && <p className="form-error entry-error">{error}</p>}
+          <button className="display-entry-link" onClick={onDisplay}>
+            <Maximize2 size={14} />
+            Connect this screen as the TV display
+          </button>
           <button className="preview-link" onClick={onPreview}>
             Preview with the demo cast instead
           </button>
         </div>
       </section>
+    </main>
+  );
+}
+
+function DisplayConnectScreen({
+  initialCode,
+  error,
+  onConnect,
+  onBack,
+}: {
+  initialCode: string;
+  error: string;
+  onConnect: (code: string, displayKey: string) => Promise<void>;
+  onBack: () => void;
+}) {
+  const [code, setCode] = useState(initialCode);
+  const [displayKey, setDisplayKey] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await onConnect(code, displayKey);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="join-page display-connect-page">
+      <div className="join-card display-connect-card">
+        <button className="join-back" onClick={onBack}>
+          ← Back to game options
+        </button>
+        <div className="join-mark">
+          <Maximize2 size={20} />
+        </div>
+        <p className="eyebrow">Read-only screen</p>
+        <h1>Connect the TV</h1>
+        <p className="display-connect-copy">
+          Enter the private pairing details shown on the host’s phone. This
+          screen will display live portraits and status changes without host
+          controls.
+        </p>
+        <form onSubmit={submit}>
+          <div className="join-fields">
+            <label className="field compact">
+              <span>Game code</span>
+              <input
+                value={displayGameCode(code)}
+                maxLength={9}
+                onChange={(event) =>
+                  setCode(normalizeGameCode(event.target.value))
+                }
+                placeholder="ABCD-1234"
+                required
+              />
+            </label>
+            <label className="field compact">
+              <span>TV pairing key</span>
+              <input
+                value={displayPairingKey(displayKey)}
+                maxLength={14}
+                onChange={(event) =>
+                  setDisplayKey(normalizeDisplayKey(event.target.value))
+                }
+                placeholder="A1B2-C3D4-E5F6"
+                required
+              />
+            </label>
+          </div>
+          {error && <p className="form-error join-error">{error}</p>}
+          <button
+            className="primary-button full-button join-submit"
+            type="submit"
+            disabled={busy}
+          >
+            {busy ? "Pairing display…" : "Open the TV display"}
+            {!busy && <Maximize2 size={15} />}
+          </button>
+        </form>
+        <p className="privacy-note">
+          <Shield size={13} />
+          The TV can view the game but cannot change anyone’s fate.
+        </p>
+      </div>
     </main>
   );
 }
@@ -1012,23 +1285,33 @@ function Hall({
   onPlayersChange,
   onLogout,
   onlineGame,
+  onRoundChange,
   syncError,
 }: {
   players: Player[];
   session: Session;
   onPlayersChange: (players: Player[]) => void;
   onLogout: () => void;
-  onlineGame?: CloudGame & { joinUrl: string };
+  onlineGame?: CloudGame & {
+    joinUrl: string;
+    displayUrl?: string;
+    displayKey?: string;
+  };
+  onRoundChange?: (round: number) => void;
   syncError?: string;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [selected, setSelected] = useState<Player | null>(null);
   const [showRules, setShowRules] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
-  const [tvMode, setTvMode] = useState(false);
+  const [tvMode, setTvMode] = useState(session.role === "display");
+  const [localRound, setLocalRound] = useState(1);
   const [toast, setToast] = useState("");
   const isHost = session.role === "host";
+  const isDisplay = session.role === "display";
   const currentPlayer = players.find((player) => player.id === session.playerId);
+  const currentRound = onlineGame?.currentRound ?? localRound;
+  const totalRounds = onlineGame?.totalRounds ?? 3;
 
   useEffect(() => {
     if (!toast) return;
@@ -1138,7 +1421,7 @@ function Hall({
           </span>
         </a>
         <nav>
-          {isHost && (
+          {(isHost || isDisplay) && (
             <button className="nav-button tv-mode-button" onClick={toggleTvMode}>
               {tvMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
               {tvMode ? "Exit TV mode" : "TV mode"}
@@ -1149,10 +1432,26 @@ function Hall({
             Rules
           </button>
           <div className="identity-pill">
-            {isHost ? <Crown size={15} /> : <UserRound size={15} />}
+            {isHost ? (
+              <Crown size={15} />
+            ) : isDisplay ? (
+              <Maximize2 size={15} />
+            ) : (
+              <UserRound size={15} />
+            )}
             <span>
-              <small>{isHost ? "Signed in as" : "Playing as"}</small>
-              {isHost ? "The Host" : currentPlayer?.name ?? "Contestant"}
+              <small>
+                {isHost
+                  ? "Signed in as"
+                  : isDisplay
+                    ? "Connected as"
+                    : "Playing as"}
+              </small>
+              {isHost
+                ? "The Host"
+                : isDisplay
+                  ? "TV Display"
+                  : currentPlayer?.name ?? "Contestant"}
             </span>
           </div>
           <button className="icon-button" onClick={onLogout} aria-label="Sign out">
@@ -1220,6 +1519,17 @@ function Hall({
               <small>Select a portrait to record their fate</small>
             </div>
           </div>
+          <RoundSelector
+            currentRound={currentRound}
+            totalRounds={totalRounds}
+            onChange={(round) => {
+              if (onRoundChange) {
+                onRoundChange(round);
+              } else {
+                setLocalRound(round);
+              }
+            }}
+          />
           <div className="host-actions">
             {onlineGame ? (
               <span className="live-sync-label">
@@ -1243,7 +1553,7 @@ function Hall({
             )}
           </div>
         </section>
-      ) : (
+      ) : !isDisplay ? (
         <section className="player-notice">
           <Camera size={17} />
           <span>
@@ -1258,13 +1568,17 @@ function Hall({
             )}
           </span>
         </section>
-      )}
+      ) : null}
 
       <section className="gallery-section">
         <div className="gallery-heading">
           <div>
             <p className="eyebrow">
-              {tvMode ? onlineGame?.title ?? "Season portrait gallery" : "Season portrait gallery"}
+              {tvMode
+                ? `Elimination round ${currentRound} of ${totalRounds} · ${
+                    onlineGame?.title ?? "Season portrait gallery"
+                  }`
+                : `Elimination round ${currentRound} of ${totalRounds}`}
             </p>
             <h2>{tvMode ? "Hall of Fame" : "The castle remembers everyone"}</h2>
           </div>
@@ -1338,11 +1652,13 @@ function Hall({
       {selected && isHost && (
         <FateModal
           player={selected}
+          currentRound={currentRound}
           onClose={() => setSelected(null)}
           onUpdate={(updated) => {
             devLog("Fate updated", {
               playerId: updated.id,
               status: updated.status,
+              eliminationRound: updated.eliminationRound,
             });
             updatePlayer(updated);
             setSelected(null);
@@ -1374,14 +1690,49 @@ function Hall({
   );
 }
 
+function RoundSelector({
+  currentRound,
+  totalRounds,
+  onChange,
+}: {
+  currentRound: number;
+  totalRounds: number;
+  onChange: (round: number) => void;
+}) {
+  return (
+    <div className="round-selector" aria-label="Choose elimination round">
+      <span>Elimination round</span>
+      <div>
+        {Array.from({ length: totalRounds }, (_, index) => index + 1).map(
+          (round) => (
+            <button
+              key={round}
+              className={currentRound === round ? "active" : ""}
+              onClick={() => onChange(round)}
+              aria-label={`Round ${round}`}
+            >
+              {round}
+            </button>
+          ),
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OnlineLobby({
   game,
   playerCount,
 }: {
-  game: CloudGame & { joinUrl: string };
+  game: CloudGame & {
+    joinUrl: string;
+    displayUrl?: string;
+    displayKey?: string;
+  };
   playerCount: number;
 }) {
   const [copied, setCopied] = useState(false);
+  const [showDisplayPairing, setShowDisplayPairing] = useState(false);
   const hoursRemaining = Math.max(
     0,
     Math.ceil((new Date(game.expiresAt).getTime() - Date.now()) / 3_600_000),
@@ -1420,12 +1771,28 @@ function OnlineLobby({
             {copied ? "Copied" : "Copy link"}
           </button>
         </div>
+        {game.displayUrl && game.displayKey && (
+          <button
+            className="pair-tv-button"
+            onClick={() => setShowDisplayPairing(true)}
+          >
+            <Maximize2 size={15} />
+            Pair a TV display
+          </button>
+        )}
       </div>
       <div className="lobby-status">
         <div>
           <UsersRound size={18} />
           <strong>{playerCount}</strong>
           <span>{playerCount === 1 ? "portrait" : "portraits"}</span>
+        </div>
+        <div>
+          <Flame size={18} />
+          <strong>
+            {game.currentRound}/{game.totalRounds}
+          </strong>
+          <span>round</span>
         </div>
         <div>
           <Clock3 size={18} />
@@ -1437,7 +1804,71 @@ function OnlineLobby({
           Live
         </small>
       </div>
+      {showDisplayPairing && game.displayUrl && game.displayKey && (
+        <DisplayPairModal
+          game={{
+            ...game,
+            displayUrl: game.displayUrl,
+            displayKey: game.displayKey,
+          }}
+          onClose={() => setShowDisplayPairing(false)}
+        />
+      )}
     </section>
+  );
+}
+
+function DisplayPairModal({
+  game,
+  onClose,
+}: {
+  game: CloudGame & {
+    displayUrl: string;
+    displayKey: string;
+  };
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copyLink = async () => {
+    await navigator.clipboard.writeText(game.displayUrl);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  return (
+    <ModalShell onClose={onClose} label="Pair a TV display">
+      <div className="modal-heading">
+        <p className="eyebrow">Private display pairing</p>
+        <h2>Connect the TV</h2>
+        <p>
+          Open this link on the TV or enter both codes there. Keep this pairing
+          key private—it grants read-only access to the live hall.
+        </p>
+      </div>
+      <div className="display-pair-content">
+        <div className="display-pair-qr">
+          <QRCodeSVG
+            value={game.displayUrl}
+            size={190}
+            bgColor="#f4e7ca"
+            fgColor="#1a0906"
+            level="M"
+            marginSize={2}
+          />
+        </div>
+        <div className="display-pair-codes">
+          <span>Game code</span>
+          <strong>{displayGameCode(game.code)}</strong>
+          <span>TV pairing key</span>
+          <strong>{displayPairingKey(game.displayKey)}</strong>
+        </div>
+      </div>
+      <button className="primary-button full-button" onClick={copyLink}>
+        {copied ? <Check size={16} /> : <Copy size={16} />}
+        {copied ? "Display link copied" : "Copy display link"}
+      </button>
+    </ModalShell>
   );
 }
 
@@ -1500,6 +1931,9 @@ function PortraitCard({
               <span className="cross cross-two" />
               <div className="fate-ribbon">
                 <strong>{statusLabels[player.status]}</strong>
+                {player.eliminationRound && (
+                  <small>Round {player.eliminationRound}</small>
+                )}
               </div>
             </div>
           )}
@@ -1565,11 +1999,13 @@ function ModalShell({
 
 function FateModal({
   player,
+  currentRound,
   onClose,
   onUpdate,
   onPhoto,
 }: {
   player: Player;
+  currentRound: number;
   onClose: () => void;
   onUpdate: (player: Player) => void;
   onPhoto: (file: File) => void;
@@ -1589,7 +2025,7 @@ function FateModal({
   return (
     <ModalShell onClose={onClose} label={`Manage ${player.name}`}>
       <div className="modal-heading">
-        <p className="eyebrow">Host decision</p>
+        <p className="eyebrow">Elimination round {currentRound}</p>
         <h2>{isFallen ? "Review their fate" : "A fate must be recorded"}</h2>
         <p>
           {isFallen
@@ -1661,6 +2097,7 @@ function FateModal({
               onUpdate({
                 ...player,
                 status: "active",
+                eliminationRound: undefined,
               })
             }
           >
@@ -1674,6 +2111,7 @@ function FateModal({
             onUpdate({
               ...player,
               status,
+              eliminationRound: currentRound,
             })
           }
         >
