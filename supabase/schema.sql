@@ -29,10 +29,11 @@ create table if not exists public.players (
   photo_data text not null check (char_length(photo_data) between 50 and 600000),
   status text not null default 'active'
     check (status in ('active', 'banished', 'murdered', 'departed')),
-  exit_round text check (exit_round is null or char_length(exit_round) <= 40),
   joined_at timestamptz not null default now(),
   unique (game_id, user_id)
 );
+
+alter table public.players drop column if exists exit_round;
 
 alter table public.games enable row level security;
 alter table public.game_members enable row level security;
@@ -272,10 +273,11 @@ begin
 end;
 $$;
 
+drop function if exists public.host_update_fate(uuid, text, text);
+
 create or replace function public.host_update_fate(
   p_player_id uuid,
-  p_status text,
-  p_exit_round text default null
+  p_status text
 )
 returns void
 language plpgsql
@@ -289,14 +291,8 @@ begin
   if p_status not in ('active', 'banished', 'murdered', 'departed') then
     raise exception 'Invalid contestant status';
   end if;
-  if p_exit_round is not null and char_length(p_exit_round) > 40 then
-    raise exception 'Round label is too long';
-  end if;
-
   update public.players player
-  set
-    status = p_status,
-    exit_round = case when p_status = 'active' then null else nullif(trim(p_exit_round), '') end
+  set status = p_status
   from public.games game
   where player.id = p_player_id
     and game.id = player.game_id
@@ -314,13 +310,13 @@ revoke all on function public.create_game(text) from public;
 revoke all on function public.join_game(text, text, text) from public;
 revoke all on function public.update_my_portrait(uuid, text) from public;
 revoke all on function public.host_update_portrait(uuid, text) from public;
-revoke all on function public.host_update_fate(uuid, text, text) from public;
+revoke all on function public.host_update_fate(uuid, text) from public;
 
 grant execute on function public.create_game(text) to authenticated;
 grant execute on function public.join_game(text, text, text) to authenticated;
 grant execute on function public.update_my_portrait(uuid, text) to authenticated;
 grant execute on function public.host_update_portrait(uuid, text) to authenticated;
-grant execute on function public.host_update_fate(uuid, text, text) to authenticated;
+grant execute on function public.host_update_fate(uuid, text) to authenticated;
 
 -- Realtime listens only return rows allowed by the SELECT policies above.
 do $$

@@ -56,7 +56,6 @@ type Player = {
   name: string;
   photo: string;
   status: PlayerStatus;
-  exitRound?: string;
 };
 
 type Session = {
@@ -96,7 +95,6 @@ const seedPlayers: Player[] = [
     name: "Theo",
     photo: portrait("photo-1500648767791-00dcc994a43e"),
     status: "banished",
-    exitRound: "Round 1",
   },
   {
     id: "celeste",
@@ -115,7 +113,6 @@ const seedPlayers: Player[] = [
     name: "Imani",
     photo: portrait("photo-1531123897727-8f129e1688ce"),
     status: "murdered",
-    exitRound: "Night 2",
   },
   {
     id: "finn",
@@ -134,7 +131,6 @@ const seedPlayers: Player[] = [
     name: "Arjun",
     photo: portrait("photo-1504593811423-6dd665756598"),
     status: "banished",
-    exitRound: "Round 3",
   },
   {
     id: "rowan",
@@ -153,7 +149,6 @@ const seedPlayers: Player[] = [
     name: "Sabine",
     photo: portrait("photo-1524250502761-1ac6f2e30d43"),
     status: "departed",
-    exitRound: "Round 4",
   },
   {
     id: "gabriel",
@@ -403,8 +398,7 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
       return (
         previous &&
         (previous.photo !== next.photo ||
-          previous.status !== next.status ||
-          previous.exitRound !== next.exitRound)
+          previous.status !== next.status)
       );
     });
 
@@ -425,14 +419,12 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
       }
       if (
         session.role === "host" &&
-        (previous.status !== next.status ||
-          previous.exitRound !== next.exitRound)
+        previous.status !== next.status
       ) {
         tasks.push(
           updateCloudFate({
             playerId: next.id,
             status: next.status,
-            exitRound: next.exitRound,
           }),
         );
       }
@@ -1346,13 +1338,11 @@ function Hall({
       {selected && isHost && (
         <FateModal
           player={selected}
-          fallenCount={fallenCount}
           onClose={() => setSelected(null)}
           onUpdate={(updated) => {
             devLog("Fate updated", {
               playerId: updated.id,
               status: updated.status,
-              exitRound: updated.exitRound,
             });
             updatePlayer(updated);
             setSelected(null);
@@ -1510,7 +1500,6 @@ function PortraitCard({
               <span className="cross cross-two" />
               <div className="fate-ribbon">
                 <strong>{statusLabels[player.status]}</strong>
-                <small>{player.exitRound}</small>
               </div>
             </div>
           )}
@@ -1576,22 +1565,17 @@ function ModalShell({
 
 function FateModal({
   player,
-  fallenCount,
   onClose,
   onUpdate,
   onPhoto,
 }: {
   player: Player;
-  fallenCount: number;
   onClose: () => void;
   onUpdate: (player: Player) => void;
   onPhoto: (file: File) => void;
 }) {
   const [status, setStatus] = useState<PlayerStatus>(
     player.status === "active" ? "banished" : player.status,
-  );
-  const [exitRound, setExitRound] = useState(
-    player.exitRound ?? `Round ${fallenCount + 1}`,
   );
   const inputRef = useRef<HTMLInputElement>(null);
   const isFallen = player.status !== "active";
@@ -1641,8 +1625,8 @@ function FateModal({
       <div className="fate-options">
         {(
           [
-            ["banished", "Banished", "Voted out at the round table"],
-            ["murdered", "Murdered", "Taken by the Traitors overnight"],
+            ["banished", "Banished", "Voted out by the group"],
+            ["murdered", "Murdered", "Removed by the Traitors"],
             ["departed", "Left game", "Withdrew or was removed"],
           ] as [PlayerStatus, string, string][]
         ).map(([value, label, detail]) => (
@@ -1669,15 +1653,6 @@ function FateModal({
         ))}
       </div>
 
-      <label className="field compact">
-        <span>When did it happen?</span>
-        <input
-          value={exitRound}
-          onChange={(event) => setExitRound(event.target.value)}
-          placeholder="e.g. Round 5 or Night 3"
-        />
-      </label>
-
       <div className="modal-actions">
         {isFallen && (
           <button
@@ -1686,7 +1661,6 @@ function FateModal({
               onUpdate({
                 ...player,
                 status: "active",
-                exitRound: undefined,
               })
             }
           >
@@ -1700,7 +1674,6 @@ function FateModal({
             onUpdate({
               ...player,
               status,
-              exitRound: exitRound.trim() || `Round ${fallenCount + 1}`,
             })
           }
         >

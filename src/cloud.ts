@@ -12,7 +12,6 @@ export type CloudPlayer = {
   name: string;
   photo: string;
   status: "active" | "banished" | "murdered" | "departed";
-  exitRound?: string;
 };
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
@@ -117,7 +116,7 @@ export async function loadCloudGame(gameId: string): Promise<CloudGame | null> {
 export async function loadCloudPlayers(gameId: string): Promise<CloudPlayer[]> {
   const { data, error } = await client()
     .from("players")
-    .select("id, name, photo_data, status, exit_round, joined_at")
+    .select("id, name, photo_data, status, joined_at")
     .eq("game_id", gameId)
     .order("joined_at", { ascending: true });
   if (error) throw error;
@@ -126,7 +125,6 @@ export async function loadCloudPlayers(gameId: string): Promise<CloudPlayer[]> {
     name: row.name,
     photo: row.photo_data,
     status: row.status,
-    exitRound: row.exit_round ?? undefined,
   }));
 }
 
@@ -144,12 +142,10 @@ export async function updateMyCloudPortrait(
 export async function updateCloudFate(input: {
   playerId: string;
   status: CloudPlayer["status"];
-  exitRound?: string;
 }): Promise<void> {
   const { error } = await client().rpc("host_update_fate", {
     p_player_id: input.playerId,
     p_status: input.status,
-    p_exit_round: input.exitRound ?? null,
   });
   if (error) throw error;
 }
