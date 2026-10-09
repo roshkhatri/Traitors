@@ -1590,6 +1590,13 @@ function Hall({
                   ? 8
                   : 10;
   const tvRows = Math.max(1, Math.ceil(players.length / tvColumns));
+  const tvGap = 10;
+  const tvCardWidth = `calc(${100 / tvColumns}% - ${
+    ((tvColumns - 1) * tvGap) / tvColumns
+  }px)`;
+  const tvCardHeight = `calc(${100 / tvRows}% - ${
+    ((tvRows - 1) * tvGap) / tvRows
+  }px)`;
 
   return (
     <main className={`hall-page ${tvMode ? "tv-mode" : ""}`}>
@@ -1788,6 +1795,8 @@ function Hall({
             {
               "--tv-columns": tvColumns,
               "--tv-rows": tvRows,
+              "--tv-card-width": tvCardWidth,
+              "--tv-card-height": tvCardHeight,
             } as React.CSSProperties
           }
         >

@@ -2237,7 +2237,13 @@ footer span {
 .tv-mode .gallery-heading {
   flex: 0 0 56px;
   align-items: center;
+  justify-content: center;
   margin: 0;
+  text-align: center;
+}
+
+.tv-mode .gallery-heading > div {
+  width: 100%;
 }
 
 .tv-mode .gallery-heading .eyebrow {
@@ -2255,21 +2261,23 @@ footer span {
 }
 
 .tv-mode .portrait-grid {
-  display: grid;
+  display: flex;
   flex: 1;
-  grid-template-columns: repeat(var(--tv-columns), minmax(0, 1fr));
-  grid-template-rows: repeat(var(--tv-rows), minmax(0, 1fr));
   align-content: center;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 10px;
   min-height: 0;
 }
 
 .tv-mode .portrait-card {
   align-self: center;
-  width: 100%;
-  height: 100%;
+  width: var(--tv-card-width);
+  height: var(--tv-card-height);
+  max-width: min(var(--tv-card-width), 520px);
   max-height: 520px;
   min-height: 0;
+  flex: 0 0 var(--tv-card-width);
   animation: none;
 }
 
