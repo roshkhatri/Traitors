@@ -26,8 +26,6 @@ create table if not exists public.players (
   game_id uuid not null references public.games(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null check (char_length(name) between 1 and 40),
-  tagline text not null default 'The new arrival'
-    check (char_length(tagline) between 1 and 80),
   photo_data text not null check (char_length(photo_data) between 50 and 600000),
   status text not null default 'active'
     check (status in ('active', 'banished', 'murdered', 'departed')),
@@ -141,7 +139,6 @@ $$;
 create or replace function public.join_game(
   p_code text,
   p_name text,
-  p_tagline text,
   p_photo_data text
 )
 returns table (
@@ -166,9 +163,6 @@ begin
   if char_length(trim(p_name)) not between 1 and 40 then
     raise exception 'Name must be between 1 and 40 characters';
   end if;
-  if char_length(trim(p_tagline)) not between 1 and 80 then
-    raise exception 'Portrait title must be between 1 and 80 characters';
-  end if;
   if p_photo_data not like 'data:image/jpeg;base64,%'
      or char_length(p_photo_data) not between 50 and 600000 then
     raise exception 'A valid compressed portrait is required';
@@ -190,19 +184,17 @@ begin
   do update set role = excluded.role;
 
   insert into public.players (
-    game_id, user_id, name, tagline, photo_data
+    game_id, user_id, name, photo_data
   )
   values (
     target_game.id,
     auth.uid(),
     trim(p_name),
-    trim(p_tagline),
     p_photo_data
   )
   on conflict (game_id, user_id)
   do update set
     name = excluded.name,
-    tagline = excluded.tagline,
     photo_data = excluded.photo_data
   returning * into joined_player;
 
@@ -319,13 +311,13 @@ $$;
 
 revoke all on function public.make_game_code() from public;
 revoke all on function public.create_game(text) from public;
-revoke all on function public.join_game(text, text, text, text) from public;
+revoke all on function public.join_game(text, text, text) from public;
 revoke all on function public.update_my_portrait(uuid, text) from public;
 revoke all on function public.host_update_portrait(uuid, text) from public;
 revoke all on function public.host_update_fate(uuid, text, text) from public;
 
 grant execute on function public.create_game(text) to authenticated;
-grant execute on function public.join_game(text, text, text, text) to authenticated;
+grant execute on function public.join_game(text, text, text) to authenticated;
 grant execute on function public.update_my_portrait(uuid, text) to authenticated;
 grant execute on function public.host_update_portrait(uuid, text) to authenticated;
 grant execute on function public.host_update_fate(uuid, text, text) to authenticated;

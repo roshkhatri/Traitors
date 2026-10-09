@@ -52,7 +52,6 @@ type Filter = "all" | "active" | "fallen";
 type Player = {
   id: string;
   name: string;
-  tagline: string;
   photo: string;
   status: PlayerStatus;
   exitRound?: string;
@@ -87,14 +86,12 @@ const seedPlayers: Player[] = [
   {
     id: "mara",
     name: "Mara",
-    tagline: "The quiet observer",
     photo: portrait("photo-1494790108377-be9c29b29330"),
     status: "active",
   },
   {
     id: "theo",
     name: "Theo",
-    tagline: "The silver tongue",
     photo: portrait("photo-1500648767791-00dcc994a43e"),
     status: "banished",
     exitRound: "Round 1",
@@ -102,21 +99,18 @@ const seedPlayers: Player[] = [
   {
     id: "celeste",
     name: "Celeste",
-    tagline: "The strategist",
     photo: portrait("photo-1534528741775-53994a69daeb"),
     status: "active",
   },
   {
     id: "jasper",
     name: "Jasper",
-    tagline: "The loyal shield",
     photo: portrait("photo-1507003211169-0a1dd7228f2d"),
     status: "active",
   },
   {
     id: "imani",
     name: "Imani",
-    tagline: "The truth seeker",
     photo: portrait("photo-1531123897727-8f129e1688ce"),
     status: "murdered",
     exitRound: "Night 2",
@@ -124,21 +118,18 @@ const seedPlayers: Player[] = [
   {
     id: "finn",
     name: "Finn",
-    tagline: "The wildcard",
     photo: portrait("photo-1506794778202-cad84cf45f1d"),
     status: "active",
   },
   {
     id: "vivienne",
     name: "Vivienne",
-    tagline: "The socialite",
     photo: portrait("photo-1517841905240-472988babdf9"),
     status: "active",
   },
   {
     id: "arjun",
     name: "Arjun",
-    tagline: "The tactician",
     photo: portrait("photo-1504593811423-6dd665756598"),
     status: "banished",
     exitRound: "Round 3",
@@ -146,21 +137,18 @@ const seedPlayers: Player[] = [
   {
     id: "rowan",
     name: "Rowan",
-    tagline: "The peacemaker",
     photo: portrait("photo-1524504388940-b1c1722653e1"),
     status: "active",
   },
   {
     id: "noah",
     name: "Noah",
-    tagline: "The detective",
     photo: portrait("photo-1527980965255-d3b416303d12"),
     status: "active",
   },
   {
     id: "sabine",
     name: "Sabine",
-    tagline: "The enigma",
     photo: portrait("photo-1524250502761-1ac6f2e30d43"),
     status: "departed",
     exitRound: "Round 4",
@@ -168,7 +156,6 @@ const seedPlayers: Player[] = [
   {
     id: "gabriel",
     name: "Gabriel",
-    tagline: "The charmer",
     photo: portrait("photo-1539571696357-5a69c17a67c6"),
     status: "active",
   },
@@ -351,7 +338,6 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
 
   const joinGame = async (input: {
     name: string;
-    tagline: string;
     photo: string;
   }) => {
     setError("");
@@ -756,13 +742,11 @@ function JoinGameScreen({
   error: string;
   onJoin: (input: {
     name: string;
-    tagline: string;
     photo: string;
   }) => Promise<void>;
   onBack: () => void;
 }) {
   const [name, setName] = useState("");
-  const [tagline, setTagline] = useState("");
   const [photo, setPhoto] = useState("");
   const [photoError, setPhotoError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -788,7 +772,7 @@ function JoinGameScreen({
     }
     setBusy(true);
     try {
-      await onJoin({ name, tagline, photo });
+      await onJoin({ name, photo });
     } finally {
       setBusy(false);
     }
@@ -848,15 +832,6 @@ function JoinGameScreen({
                 onChange={(event) => setName(event.target.value)}
                 placeholder="How should the hall remember you?"
                 required
-              />
-            </label>
-            <label className="field compact">
-              <span>Portrait title <small>optional</small></span>
-              <input
-                value={tagline}
-                maxLength={80}
-                onChange={(event) => setTagline(event.target.value)}
-                placeholder="e.g. The quiet observer"
               />
             </label>
           </div>
@@ -1100,14 +1075,13 @@ function Hall({
     }
   };
 
-  const addPlayer = (name: string, tagline: string) => {
+  const addPlayer = (name: string) => {
     const id = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now()}`;
     onPlayersChange([
       ...players,
       {
         id,
         name,
-        tagline: tagline || "The new arrival",
         photo: "",
         status: "active",
       },
@@ -1507,7 +1481,6 @@ function PortraitCard({
         <div className="portrait-plaque">
           <span className="plaque-line" />
           <h3>{player.name}</h3>
-          <p>{player.tagline}</p>
         </div>
       </div>
       {canEdit && (
@@ -1600,7 +1573,6 @@ function FateModal({
         </div>
         <div>
           <strong>{player.name}</strong>
-          <span>{player.tagline}</span>
         </div>
         <button onClick={() => inputRef.current?.click()}>
           <Camera size={15} />
@@ -1741,14 +1713,13 @@ function AddPlayerModal({
   onAdd,
 }: {
   onClose: () => void;
-  onAdd: (name: string, tagline: string) => void;
+  onAdd: (name: string) => void;
 }) {
   const [name, setName] = useState("");
-  const [tagline, setTagline] = useState("");
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (name.trim()) onAdd(name.trim(), tagline.trim());
+    if (name.trim()) onAdd(name.trim());
   };
 
   return (
@@ -1768,14 +1739,6 @@ function AddPlayerModal({
               placeholder="e.g. Claudia"
               autoFocus
               required
-            />
-          </label>
-          <label className="field compact">
-            <span>Portrait title</span>
-            <input
-              value={tagline}
-              onChange={(event) => setTagline(event.target.value)}
-              placeholder="e.g. The master of misdirection"
             />
           </label>
         </div>

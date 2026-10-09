@@ -10,7 +10,6 @@ export type CloudGame = {
 export type CloudPlayer = {
   id: string;
   name: string;
-  tagline: string;
   photo: string;
   status: "active" | "banished" | "murdered" | "departed";
   exitRound?: string;
@@ -74,14 +73,12 @@ export async function createCloudGame(title: string): Promise<CloudGame> {
 export async function joinCloudGame(input: {
   code: string;
   name: string;
-  tagline: string;
   photo: string;
 }): Promise<{ game: CloudGame; playerId: string }> {
   await ensureAnonymousSession();
   const { data, error } = await client().rpc("join_game", {
     p_code: normalizeGameCode(input.code),
     p_name: input.name.trim(),
-    p_tagline: input.tagline.trim() || "The new arrival",
     p_photo_data: input.photo,
   });
   if (error) throw error;
@@ -120,14 +117,13 @@ export async function loadCloudGame(gameId: string): Promise<CloudGame | null> {
 export async function loadCloudPlayers(gameId: string): Promise<CloudPlayer[]> {
   const { data, error } = await client()
     .from("players")
-    .select("id, name, tagline, photo_data, status, exit_round, joined_at")
+    .select("id, name, photo_data, status, exit_round, joined_at")
     .eq("game_id", gameId)
     .order("joined_at", { ascending: true });
   if (error) throw error;
   return (data ?? []).map((row) => ({
     id: row.id,
     name: row.name,
-    tagline: row.tagline,
     photo: row.photo_data,
     status: row.status,
     exitRound: row.exit_round ?? undefined,
