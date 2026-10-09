@@ -62,7 +62,25 @@ export async function ensureAnonymousSession() {
   } = await activeClient.auth.getSession();
 
   if (sessionError) throw sessionError;
-  if (session) return session.user;
+  if (session) {
+    const {
+      data: { user },
+      error: userError,
+    } = await activeClient.auth.getUser();
+
+    if (user) return user;
+    if (
+      userError &&
+      /failed to fetch|network|load failed/i.test(userError.message)
+    ) {
+      throw userError;
+    }
+
+    const { error: signOutError } = await activeClient.auth.signOut({
+      scope: "local",
+    });
+    if (signOutError) throw signOutError;
+  }
 
   const { data, error } = await activeClient.auth.signInAnonymously();
   if (error) throw error;
@@ -205,7 +223,6 @@ export async function joinCloudDisplay(input: {
 }
 
 export async function loadCloudGame(gameId: string): Promise<CloudGame | null> {
-  await ensureAnonymousSession();
   const { data, error } = await client()
     .from("games")
     .select(
