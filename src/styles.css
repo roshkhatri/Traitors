@@ -169,15 +169,6 @@ button {
   transform: rotate(-45deg);
 }
 
-.crest span {
-  position: absolute;
-  bottom: 8px;
-  color: #f0d796;
-  font-family: "Cormorant Garamond", serif;
-  font-size: 1.05rem;
-  font-weight: 700;
-}
-
 .crest-large {
   width: 72px;
   height: 72px;

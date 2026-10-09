@@ -116,6 +116,52 @@ const DEFAULT_ROSTER = [
   "Gunika",
 ];
 
+function TraitorsMark({
+  size = 32,
+  className,
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M14 25 18.5 11 32 21.5 45.5 11 50 25H14Z"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M18 29H46"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M10.5 42C16.2 34.9 23.3 31.5 32 31.5S47.8 34.9 53.5 42C47.8 49.1 40.7 52.5 32 52.5S16.2 49.1 10.5 42Z"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="m32 35.5 6.5 6.5-6.5 6.5-6.5-6.5 6.5-6.5Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <circle cx="32" cy="42" r="2.2" fill="currentColor" />
+    </svg>
+  );
+}
+
 function devLog(event: string, details?: unknown) {
   if (import.meta.env.DEV) {
     console.debug(`[Traitors Hall] ${event}`, details ?? "");
@@ -866,8 +912,7 @@ function GameEntryScreen({
           Live game · No accounts required
         </div>
         <div className="crest crest-large" aria-label="Traitors crest">
-          <Crown size={30} strokeWidth={1.5} />
-          <span>T</span>
+          <TraitorsMark size={43} />
         </div>
         <p className="eyebrow">Welcome to</p>
         <h1>
@@ -1348,8 +1393,7 @@ function LoginScreen({
           Blackthorne Manor · Season One
         </div>
         <div className="crest crest-large" aria-label="Traitors crest">
-          <Crown size={30} strokeWidth={1.5} />
-          <span>T</span>
+          <TraitorsMark size={43} />
         </div>
         <p className="eyebrow">Welcome to</p>
         <h1>
@@ -1603,7 +1647,7 @@ function Hall({
       <header className="site-header">
         <a className="brand" href="#top" aria-label="Traitors Hall of Fame">
           <span className="mini-crest">
-            <Crown size={15} />
+            <TraitorsMark size={22} />
           </span>
           <span>
             Traitors
@@ -1835,7 +1879,7 @@ function Hall({
 
       <footer>
         <div className="footer-crest">
-          <Crown size={18} />
+          <TraitorsMark size={25} />
         </div>
         <p>The truth always comes out in the end.</p>
         <span>
