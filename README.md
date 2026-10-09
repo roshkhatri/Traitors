@@ -32,7 +32,8 @@ offers the original same-browser demo. The demo host key is `2026`.
 - Invited names appear immediately with initial placeholders. Players scan the
   QR, choose an unclaimed name, and add a compressed photo. No email or
   password is requested.
-- The player identity and host identity persist in their browsers.
+- The player identity and host identity persist in their browsers, so reopening
+  the site on the same device reconnects to the active game automatically.
 - Before the game starts, invitations and photos remain available for up to
   72 hours.
 - Pressing **Start game** begins the live phase and resets the deletion

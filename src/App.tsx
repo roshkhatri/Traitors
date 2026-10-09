@@ -821,7 +821,6 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
           setError("");
           setStage("display");
         }}
-        onPreview={onPreview}
       />
     );
   }
@@ -1016,14 +1015,12 @@ function GameEntryScreen({
   onJoin,
   onHost,
   onDisplay,
-  onPreview,
 }: {
   error: string;
   onStart: (input: StartGameInput) => Promise<void>;
   onJoin: (code: string) => void;
   onHost: () => void;
   onDisplay: () => void;
-  onPreview: () => void;
 }) {
   const [hostName, setHostName] = useState(DEFAULT_HOST_NAME);
   const [eventName, setEventName] = useState(DEFAULT_EVENT);
@@ -1199,6 +1196,11 @@ function GameEntryScreen({
               Join
             </button>
           </form>
+          <p className="returning-player-note">
+            <UserRound size={13} />
+            Returning on the same phone? Open this page again to reconnect
+            automatically.
+          </p>
 
           {error && <p className="form-error entry-error">{error}</p>}
           <button className="display-entry-link" onClick={onHost}>
@@ -1208,9 +1210,6 @@ function GameEntryScreen({
           <button className="display-entry-link" onClick={onDisplay}>
             <Maximize2 size={14} />
             Connect this screen as the TV display
-          </button>
-          <button className="preview-link" onClick={onPreview}>
-            Preview with the demo cast instead
           </button>
         </div>
       </section>

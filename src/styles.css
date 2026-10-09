@@ -1719,21 +1719,21 @@ footer span {
   margin: 15px 0 0;
 }
 
-.preview-link {
-  display: block;
-  width: 100%;
-  margin-top: 21px;
-  padding: 0;
-  color: #6d5c49;
-  background: transparent;
-  border: 0;
-  font-size: 0.59rem;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+.returning-player-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 13px 0 0;
+  color: #756653;
+  font-size: 0.57rem;
+  line-height: 1.5;
+  text-align: center;
 }
 
-.preview-link:hover {
-  color: #b19766;
+.returning-player-note svg {
+  flex: 0 0 auto;
+  color: #a68b5c;
 }
 
 .display-entry-link {
