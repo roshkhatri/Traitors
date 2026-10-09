@@ -2,19 +2,25 @@ import {
   Camera,
   Check,
   ChevronDown,
+  Clock3,
   CircleHelp,
+  Copy,
   Crown,
   Flame,
   LogOut,
   Plus,
+  QrCode,
   RotateCcw,
   Shield,
   Skull,
   Sparkles,
   UserRound,
   UsersRound,
+  Wifi,
+  WifiOff,
   X,
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   ChangeEvent,
   FormEvent,
@@ -24,6 +30,20 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  CloudGame,
+  createCloudGame,
+  ensureAnonymousSession,
+  isCloudConfigured,
+  joinCloudGame,
+  loadCloudGame,
+  loadCloudPlayers,
+  normalizeGameCode,
+  subscribeToCloudPlayers,
+  updateCloudFate,
+  updateHostCloudPortrait,
+  updateMyCloudPortrait,
+} from "./cloud";
 
 type PlayerStatus = "active" | "banished" | "murdered" | "departed";
 type Role = "host" | "player";
@@ -43,8 +63,15 @@ type Session = {
   playerId?: string;
 };
 
+type OnlineSession = {
+  role: Role;
+  gameId: string;
+  playerId?: string;
+};
+
 const PLAYER_STORAGE_KEY = "traitors-hall-players-v1";
 const SESSION_STORAGE_KEY = "traitors-hall-session-v1";
+const ONLINE_SESSION_STORAGE_KEY = "traitors-online-session-v1";
 const HOST_PIN = "2026";
 
 function devLog(event: string, details?: unknown) {
@@ -164,6 +191,13 @@ function readStored<T>(key: string, fallback: T): T {
 }
 
 async function compressPhoto(file: File): Promise<string> {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    throw new Error("Please choose a JPG, PNG, or WebP image.");
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    throw new Error("Please choose a photo smaller than 8 MB.");
+  }
+
   const objectUrl = URL.createObjectURL(file);
   try {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -173,7 +207,7 @@ async function compressPhoto(file: File): Promise<string> {
       element.src = objectUrl;
     });
 
-    const maxSide = 900;
+    const maxSide = 640;
     const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(image.width * scale);
@@ -181,13 +215,301 @@ async function compressPhoto(file: File): Promise<string> {
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Photo processing is unavailable.");
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.78);
+    const compressed = canvas.toDataURL("image/jpeg", 0.7);
+    if (compressed.length > 600000) {
+      throw new Error("That photo is still too large after compression.");
+    }
+    return compressed;
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
 }
 
+function buildJoinUrl(code: string) {
+  const url = new URL(import.meta.env.BASE_URL, window.location.origin);
+  url.searchParams.set("game", code);
+  return url.toString();
+}
+
+function friendlyCloudError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/invalid or has expired/i.test(message)) {
+    return "That game code is invalid or the 48-hour session has expired.";
+  }
+  if (/anonymous sign-ins/i.test(message)) {
+    return "Anonymous game access is not enabled in Supabase yet.";
+  }
+  if (/failed to fetch|network/i.test(message)) {
+    return "The game could not reach its shared database. Check the connection.";
+  }
+  if (/photo|portrait|image/i.test(message)) {
+    return message;
+  }
+  devLog("Cloud error", message);
+  return "Something interrupted the game session. Please try again.";
+}
+
+function displayGameCode(code: string) {
+  return code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+}
+
 function App() {
+  const [showOfflinePreview, setShowOfflinePreview] = useState(false);
+
+  if (showOfflinePreview) {
+    return <DemoApp />;
+  }
+
+  return <OnlineApp onPreview={() => setShowOfflinePreview(true)} />;
+}
+
+function OnlineApp({ onPreview }: { onPreview: () => void }) {
+  const initialCode = normalizeGameCode(
+    new URLSearchParams(window.location.search).get("game") ?? "",
+  );
+  const [stage, setStage] = useState<
+    "loading" | "setup" | "entry" | "join" | "game"
+  >(isCloudConfigured ? "loading" : "setup");
+  const [game, setGame] = useState<CloudGame | null>(null);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [session, setSession] = useState<OnlineSession | null>(null);
+  const [joinCode, setJoinCode] = useState(initialCode);
+  const [error, setError] = useState("");
+  const [syncError, setSyncError] = useState("");
+
+  const refreshPlayers = async (gameId: string) => {
+    const nextPlayers = await loadCloudPlayers(gameId);
+    setPlayers(nextPlayers);
+  };
+
+  useEffect(() => {
+    if (!isCloudConfigured) return;
+
+    let cancelled = false;
+    const boot = async () => {
+      try {
+        await ensureAnonymousSession();
+        const saved = readStored<OnlineSession | null>(
+          ONLINE_SESSION_STORAGE_KEY,
+          null,
+        );
+        if (saved) {
+          const savedGame = await loadCloudGame(saved.gameId);
+          if (savedGame && !cancelled) {
+            setGame(savedGame);
+            setSession(saved);
+            await refreshPlayers(savedGame.id);
+            if (!cancelled) setStage("game");
+            return;
+          }
+          localStorage.removeItem(ONLINE_SESSION_STORAGE_KEY);
+        }
+        if (!cancelled) setStage(initialCode ? "join" : "entry");
+      } catch (bootError) {
+        if (!cancelled) {
+          setError(friendlyCloudError(bootError));
+          setStage(initialCode ? "join" : "entry");
+        }
+      }
+    };
+    void boot();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (stage !== "game" || !game) return;
+    return subscribeToCloudPlayers(game.id, () => {
+      void refreshPlayers(game.id).catch((refreshError) =>
+        setSyncError(friendlyCloudError(refreshError)),
+      );
+    });
+  }, [game?.id, stage]);
+
+  const startGame = async (title: string) => {
+    setError("");
+    try {
+      const created = await createCloudGame(title);
+      const nextSession: OnlineSession = {
+        role: "host",
+        gameId: created.id,
+      };
+      localStorage.setItem(
+        ONLINE_SESSION_STORAGE_KEY,
+        JSON.stringify(nextSession),
+      );
+      setGame(created);
+      setPlayers([]);
+      setSession(nextSession);
+      setStage("game");
+      devLog("Shared game created", { gameId: created.id });
+    } catch (startError) {
+      setError(friendlyCloudError(startError));
+    }
+  };
+
+  const joinGame = async (input: {
+    name: string;
+    tagline: string;
+    photo: string;
+  }) => {
+    setError("");
+    try {
+      const joined = await joinCloudGame({
+        code: joinCode,
+        ...input,
+      });
+      const nextSession: OnlineSession = {
+        role: "player",
+        gameId: joined.game.id,
+        playerId: joined.playerId,
+      };
+      localStorage.setItem(
+        ONLINE_SESSION_STORAGE_KEY,
+        JSON.stringify(nextSession),
+      );
+      setGame(joined.game);
+      setSession(nextSession);
+      await refreshPlayers(joined.game.id);
+      setStage("game");
+      devLog("Contestant joined shared game", {
+        gameId: joined.game.id,
+        playerId: joined.playerId,
+      });
+    } catch (joinError) {
+      setError(friendlyCloudError(joinError));
+    }
+  };
+
+  const openJoin = (code: string) => {
+    const normalized = normalizeGameCode(code);
+    if (!normalized) {
+      setError("Enter the game code shown on the host screen.");
+      return;
+    }
+    setError("");
+    setJoinCode(normalized);
+    const url = new URL(window.location.href);
+    url.searchParams.set("game", normalized);
+    window.history.replaceState({}, "", url);
+    setStage("join");
+  };
+
+  const leaveGame = () => {
+    localStorage.removeItem(ONLINE_SESSION_STORAGE_KEY);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("game");
+    window.history.replaceState({}, "", url);
+    setGame(null);
+    setPlayers([]);
+    setSession(null);
+    setError("");
+    setStage("entry");
+  };
+
+  const syncPlayers = (nextPlayers: Player[]) => {
+    if (!session) return;
+    const changes = nextPlayers.filter((next) => {
+      const previous = players.find((player) => player.id === next.id);
+      return (
+        previous &&
+        (previous.photo !== next.photo ||
+          previous.status !== next.status ||
+          previous.exitRound !== next.exitRound)
+      );
+    });
+
+    setPlayers(nextPlayers);
+    setSyncError("");
+
+    const updates = changes.flatMap((next) => {
+      const previous = players.find((player) => player.id === next.id);
+      if (!previous) return [];
+      const tasks: Promise<void>[] = [];
+
+      if (previous.photo !== next.photo) {
+        tasks.push(
+          session.role === "host"
+            ? updateHostCloudPortrait(next.id, next.photo)
+            : updateMyCloudPortrait(next.id, next.photo),
+        );
+      }
+      if (
+        session.role === "host" &&
+        (previous.status !== next.status ||
+          previous.exitRound !== next.exitRound)
+      ) {
+        tasks.push(
+          updateCloudFate({
+            playerId: next.id,
+            status: next.status,
+            exitRound: next.exitRound,
+          }),
+        );
+      }
+      return tasks;
+    });
+
+    void Promise.all(updates).catch(async (updateError) => {
+      setSyncError(friendlyCloudError(updateError));
+      if (game) await refreshPlayers(game.id);
+    });
+  };
+
+  if (stage === "setup") {
+    return <CloudSetupScreen onPreview={onPreview} />;
+  }
+
+  if (stage === "loading") {
+    return <LoadingScreen />;
+  }
+
+  if (stage === "entry") {
+    return (
+      <GameEntryScreen
+        error={error}
+        onStart={startGame}
+        onJoin={openJoin}
+        onPreview={onPreview}
+      />
+    );
+  }
+
+  if (stage === "join") {
+    return (
+      <JoinGameScreen
+        code={joinCode}
+        error={error}
+        onJoin={joinGame}
+        onBack={() => {
+          setError("");
+          setStage("entry");
+        }}
+      />
+    );
+  }
+
+  if (!game || !session) {
+    return <LoadingScreen />;
+  }
+
+  return (
+    <Hall
+      players={players}
+      session={{ role: session.role, playerId: session.playerId }}
+      onPlayersChange={syncPlayers}
+      onLogout={leaveGame}
+      onlineGame={{
+        ...game,
+        joinUrl: buildJoinUrl(game.code),
+      }}
+      syncError={syncError}
+    />
+  );
+}
+
+function DemoApp() {
   const [players, setPlayers] = useState<Player[]>(() =>
     readStored(PLAYER_STORAGE_KEY, seedPlayers),
   );
@@ -224,6 +546,337 @@ function App() {
       onPlayersChange={setPlayers}
       onLogout={() => setSession(null)}
     />
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <main className="loading-page">
+      <div className="loading-crest">
+        <Flame size={24} fill="currentColor" />
+      </div>
+      <p className="eyebrow">Opening the manor</p>
+      <h1>Preparing the hall…</h1>
+    </main>
+  );
+}
+
+function CloudSetupScreen({ onPreview }: { onPreview: () => void }) {
+  return (
+    <main className="login-page setup-page">
+      <section className="login-story">
+        <div className="season-kicker">
+          <span />
+          Shared party mode
+        </div>
+        <div className="crest crest-large" aria-label="Traitors crest">
+          <WifiOff size={29} strokeWidth={1.5} />
+        </div>
+        <p className="eyebrow">One final connection</p>
+        <h1>
+          The Hall
+          <br />
+          <em>goes live</em>
+        </h1>
+        <p className="login-intro">
+          The QR game is built and ready. Connect a free Supabase project so
+          phones and the host screen can share portraits in real time.
+        </p>
+      </section>
+      <section className="login-panel-wrap">
+        <div className="login-panel setup-panel">
+          <div className="panel-flame">
+            <Wifi size={19} />
+          </div>
+          <p className="eyebrow">Cloud setup required</p>
+          <h2>Connect the game</h2>
+          <div className="setup-steps">
+            <div>
+              <span>1</span>
+              <p>
+                Create a free Supabase project and run{" "}
+                <code>supabase/schema.sql</code>.
+              </p>
+            </div>
+            <div>
+              <span>2</span>
+              <p>
+                Add its URL and publishable key as GitHub repository variables.
+              </p>
+            </div>
+          </div>
+          <button className="primary-button full-button" onClick={onPreview}>
+            Open the offline preview
+          </button>
+          <p className="privacy-note">
+            <Shield size={13} />
+            The offline preview remains limited to this browser.
+          </p>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function GameEntryScreen({
+  error,
+  onStart,
+  onJoin,
+  onPreview,
+}: {
+  error: string;
+  onStart: (title: string) => Promise<void>;
+  onJoin: (code: string) => void;
+  onPreview: () => void;
+}) {
+  const [title, setTitle] = useState("Tonight at Blackthorne Manor");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const start = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await onStart(title);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const join = (event: FormEvent) => {
+    event.preventDefault();
+    onJoin(code);
+  };
+
+  return (
+    <main className="login-page">
+      <div className="ambient ambient-one" />
+      <div className="ambient ambient-two" />
+      <section className="login-story">
+        <div className="season-kicker">
+          <span />
+          Live game · No accounts required
+        </div>
+        <div className="crest crest-large" aria-label="Traitors crest">
+          <Crown size={30} strokeWidth={1.5} />
+          <span>T</span>
+        </div>
+        <p className="eyebrow">Welcome to</p>
+        <h1>
+          The Hall
+          <br />
+          <em>of Fame</em>
+        </h1>
+        <p className="login-intro">
+          Start a short-lived game, put the hall on the big screen, and let
+          contestants join by scanning one QR code.
+        </p>
+        <div className="live-feature-row">
+          <span>
+            <Clock3 size={15} /> 48-hour game
+          </span>
+          <span>
+            <QrCode size={15} /> QR entry
+          </span>
+          <span>
+            <Wifi size={15} /> Live updates
+          </span>
+        </div>
+      </section>
+
+      <section className="login-panel-wrap">
+        <div className="login-panel game-entry-panel">
+          <div className="panel-flame">
+            <Flame size={21} fill="currentColor" />
+          </div>
+          <p className="eyebrow">Begin tonight’s game</p>
+          <h2>Start or join</h2>
+          <p className="panel-copy">
+            Hosts create the room. Contestants enter the code on the screen.
+          </p>
+
+          <form onSubmit={start}>
+            <label className="field">
+              <span>Game title</span>
+              <input
+                value={title}
+                maxLength={80}
+                onChange={(event) => setTitle(event.target.value)}
+                required
+              />
+            </label>
+            <button
+              className="primary-button login-button"
+              type="submit"
+              disabled={busy}
+            >
+              {busy ? "Preparing the hall…" : "Start as host"}
+              <Crown size={16} />
+            </button>
+          </form>
+
+          <div className="entry-divider">
+            <span>or join a game</span>
+          </div>
+
+          <form className="join-code-form" onSubmit={join}>
+            <label className="field">
+              <span>Game code</span>
+              <input
+                value={code}
+                maxLength={9}
+                onChange={(event) =>
+                  setCode(normalizeGameCode(event.target.value))
+                }
+                placeholder="ABCD-1234"
+              />
+            </label>
+            <button className="secondary-button" type="submit">
+              Join
+            </button>
+          </form>
+
+          {error && <p className="form-error entry-error">{error}</p>}
+          <button className="preview-link" onClick={onPreview}>
+            Preview with the demo cast instead
+          </button>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function JoinGameScreen({
+  code,
+  error,
+  onJoin,
+  onBack,
+}: {
+  code: string;
+  error: string;
+  onJoin: (input: {
+    name: string;
+    tagline: string;
+    photo: string;
+  }) => Promise<void>;
+  onBack: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [photo, setPhoto] = useState("");
+  const [photoError, setPhotoError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const choosePhoto = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setPhotoError("");
+    try {
+      setPhoto(await compressPhoto(file));
+    } catch (photoIssue) {
+      setPhotoError(friendlyCloudError(photoIssue));
+    }
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!photo) {
+      setPhotoError("Add a portrait before entering the hall.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onJoin({ name, tagline, photo });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="join-page">
+      <div className="join-card">
+        <button className="join-back" onClick={onBack}>
+          ← Enter a different code
+        </button>
+        <div className="join-mark">
+          <Crown size={21} />
+        </div>
+        <p className="eyebrow">You have been summoned</p>
+        <h1>Claim your portrait</h1>
+        <p className="join-code-label">
+          Game <strong>{displayGameCode(code)}</strong>
+        </p>
+
+        <form onSubmit={submit}>
+          <button
+            type="button"
+            className={`portrait-picker ${photo ? "has-photo" : ""}`}
+            onClick={() => inputRef.current?.click()}
+          >
+            {photo ? (
+              <img src={photo} alt="Your portrait preview" />
+            ) : (
+              <>
+                <Camera size={25} />
+                <strong>Add your photo</strong>
+                <span>JPG, PNG, or WebP · up to 8 MB</span>
+              </>
+            )}
+            {photo && (
+              <span className="portrait-picker-edit">
+                <Camera size={14} /> Change
+              </span>
+            )}
+          </button>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={choosePhoto}
+            hidden
+          />
+          {photoError && <p className="form-error">{photoError}</p>}
+
+          <div className="join-fields">
+            <label className="field compact">
+              <span>Your name</span>
+              <input
+                value={name}
+                maxLength={40}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="How should the hall remember you?"
+                required
+              />
+            </label>
+            <label className="field compact">
+              <span>Portrait title <small>optional</small></span>
+              <input
+                value={tagline}
+                maxLength={80}
+                onChange={(event) => setTagline(event.target.value)}
+                placeholder="e.g. The quiet observer"
+              />
+            </label>
+          </div>
+
+          {error && <p className="form-error join-error">{error}</p>}
+          <button
+            className="primary-button full-button join-submit"
+            type="submit"
+            disabled={busy}
+          >
+            {busy ? "Entering the manor…" : "Enter the hall"}
+            {!busy && <span>→</span>}
+          </button>
+        </form>
+        <p className="privacy-note">
+          <Shield size={13} />
+          No email or password. This device remembers you for this game.
+        </p>
+      </div>
+    </main>
   );
 }
 
@@ -389,11 +1042,15 @@ function Hall({
   session,
   onPlayersChange,
   onLogout,
+  onlineGame,
+  syncError,
 }: {
   players: Player[];
   session: Session;
   onPlayersChange: (players: Player[]) => void;
   onLogout: () => void;
+  onlineGame?: CloudGame & { joinUrl: string };
+  syncError?: string;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [selected, setSelected] = useState<Player | null>(null);
@@ -502,7 +1159,7 @@ function Hall({
         <div className="hero-content">
           <div className="season-kicker centered">
             <span />
-            Blackthorne Manor · Season One
+            {onlineGame?.title ?? "Blackthorne Manor · Season One"}
             <span />
           </div>
           <p className="eyebrow">The official</p>
@@ -536,6 +1193,17 @@ function Hall({
         </div>
       </section>
 
+      {syncError && (
+        <section className="sync-error" role="alert">
+          <WifiOff size={16} />
+          {syncError} Your latest view has been restored from the shared game.
+        </section>
+      )}
+
+      {onlineGame && isHost && (
+        <OnlineLobby game={onlineGame} playerCount={players.length} />
+      )}
+
       {isHost ? (
         <section className="host-bar">
           <div className="host-bar-label">
@@ -546,14 +1214,26 @@ function Hall({
             </div>
           </div>
           <div className="host-actions">
-            <button className="text-button" onClick={resetHall}>
-              <RotateCcw size={15} />
-              Reset demo
-            </button>
-            <button className="secondary-button" onClick={() => setShowAdd(true)}>
-              <Plus size={16} />
-              Add contestant
-            </button>
+            {onlineGame ? (
+              <span className="live-sync-label">
+                <Wifi size={15} />
+                Live on every screen
+              </span>
+            ) : (
+              <>
+                <button className="text-button" onClick={resetHall}>
+                  <RotateCcw size={15} />
+                  Reset demo
+                </button>
+                <button
+                  className="secondary-button"
+                  onClick={() => setShowAdd(true)}
+                >
+                  <Plus size={16} />
+                  Add contestant
+                </button>
+              </>
+            )}
           </div>
         </section>
       ) : (
@@ -562,6 +1242,13 @@ function Hall({
           <span>
             Want a different portrait? Find your card and choose{" "}
             <strong>Update my photo</strong>.
+            {onlineGame && (
+              <>
+                {" "}
+                You’re connected to game{" "}
+                <strong>{displayGameCode(onlineGame.code)}</strong>.
+              </>
+            )}
           </span>
         </section>
       )}
@@ -608,9 +1295,17 @@ function Hall({
 
         {filteredPlayers.length === 0 && (
           <div className="empty-state">
-            <Flame size={25} />
-            <h3>No portraits in this wing</h3>
-            <p>Choose another filter to return to the gallery.</p>
+            {onlineGame && isHost ? <QrCode size={25} /> : <Flame size={25} />}
+            <h3>
+              {onlineGame && isHost
+                ? "Waiting for the first arrival"
+                : "No portraits in this wing"}
+            </h3>
+            <p>
+              {onlineGame && isHost
+                ? "Keep the QR code on screen while contestants join."
+                : "Choose another filter to return to the gallery."}
+            </p>
           </div>
         )}
       </section>
@@ -648,7 +1343,7 @@ function Hall({
         />
       )}
       {showRules && <RulesModal onClose={() => setShowRules(false)} />}
-      {showAdd && (
+      {showAdd && !onlineGame && (
         <AddPlayerModal
           onClose={() => setShowAdd(false)}
           onAdd={addPlayer}
@@ -661,6 +1356,73 @@ function Hall({
         </div>
       )}
     </main>
+  );
+}
+
+function OnlineLobby({
+  game,
+  playerCount,
+}: {
+  game: CloudGame & { joinUrl: string };
+  playerCount: number;
+}) {
+  const [copied, setCopied] = useState(false);
+  const hoursRemaining = Math.max(
+    0,
+    Math.ceil((new Date(game.expiresAt).getTime() - Date.now()) / 3_600_000),
+  );
+
+  const copyLink = async () => {
+    await navigator.clipboard.writeText(game.joinUrl);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  return (
+    <section className="online-lobby">
+      <div className="qr-frame">
+        <QRCodeSVG
+          value={game.joinUrl}
+          size={158}
+          bgColor="#f4e7ca"
+          fgColor="#1a0906"
+          level="M"
+          marginSize={2}
+        />
+      </div>
+      <div className="online-lobby-copy">
+        <p className="eyebrow">Scan to enter the game</p>
+        <h2>Contestants, claim your portrait</h2>
+        <p>
+          Open your camera, scan the code, and add your name and photo. New
+          portraits appear on this screen automatically.
+        </p>
+        <div className="game-code-display">
+          <span>Game code</span>
+          <strong>{displayGameCode(game.code)}</strong>
+          <button onClick={copyLink}>
+            {copied ? <Check size={16} /> : <Copy size={16} />}
+            {copied ? "Copied" : "Copy link"}
+          </button>
+        </div>
+      </div>
+      <div className="lobby-status">
+        <div>
+          <UsersRound size={18} />
+          <strong>{playerCount}</strong>
+          <span>{playerCount === 1 ? "portrait" : "portraits"}</span>
+        </div>
+        <div>
+          <Clock3 size={18} />
+          <strong>{hoursRemaining}</strong>
+          <span>hours left</span>
+        </div>
+        <small>
+          <span className="host-live-dot" />
+          Live
+        </small>
+      </div>
+    </section>
   );
 }
 
