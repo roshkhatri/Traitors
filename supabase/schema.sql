@@ -3,6 +3,7 @@
 
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
+create extension if not exists pg_cron;
 
 create table if not exists public.games (
   id uuid primary key default gen_random_uuid(),
@@ -498,6 +499,44 @@ grant execute on function public.update_my_portrait(uuid, text) to authenticated
 grant execute on function public.host_update_portrait(uuid, text) to authenticated;
 grant execute on function public.host_update_fate(uuid, text) to authenticated;
 grant execute on function public.host_set_round(uuid, integer) to authenticated;
+
+-- Remove expired games and their short-lived anonymous identities. An older
+-- anonymous identity is retained while it still belongs to an active game,
+-- allowing the same host phone to safely start another game later.
+create or replace function public.cleanup_expired_games_and_sessions()
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.games
+  where expires_at <= now();
+
+  delete from auth.users as user_row
+  where user_row.is_anonymous is true
+    and user_row.created_at <= now() - interval '48 hours'
+    and not exists (
+      select 1
+      from public.game_members member
+      join public.games game on game.id = member.game_id
+      where member.user_id = user_row.id
+        and game.expires_at > now()
+    );
+end;
+$$;
+
+revoke all on function public.cleanup_expired_games_and_sessions() from public;
+
+-- Calling cron.schedule again with the same name updates the existing job,
+-- which keeps this schema safe to rerun.
+select cron.schedule(
+  'traitors-expired-session-cleanup',
+  '17 * * * *',
+  $cleanup$
+    select public.cleanup_expired_games_and_sessions();
+  $cleanup$
+);
 
 -- Realtime listens only return rows allowed by the SELECT policies above.
 do $$

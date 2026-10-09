@@ -28,6 +28,8 @@ offers the original same-browser demo. The demo host key is `2026`.
 - Players add a compressed photo and name. No email or password is requested.
 - The player identity and host identity persist in their browsers.
 - The game expires 48 hours after it is created.
+- An hourly database cleanup removes expired games and deletes anonymous
+  identities older than 48 hours once they are no longer in an active game.
 - Supabase Realtime updates the projected hall as players join or change photos.
 - The host selects the active elimination round from the phone. The TV displays
   “Round X of Y,” and each crossed portrait records the round it happened.
