@@ -37,6 +37,9 @@ offers the original same-browser demo. The demo host key is `2026`.
   72 hours.
 - Pressing **Start game** begins the live phase and resets the deletion
   deadline to 48 hours from that moment.
+- The host can choose **End game** at any time. After an irreversible
+  confirmation, the game, portraits, memberships, and device access are
+  deleted immediately.
 - An hourly database cleanup removes the expired game, portraits, memberships,
   and associated anonymous identities.
 - Supabase Realtime updates the projected hall as players join or change photos.
@@ -66,7 +69,8 @@ with the private host code.
 
 The SQL creates short-lived games, membership-based Row Level Security, and
 restricted database functions. Players may update only their own portraits;
-only authenticated host devices may start the game or change outcomes.
+only authenticated host devices may start, end, or change outcomes in the
+game.
 
 ## Publish with GitHub Pages
 

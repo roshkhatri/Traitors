@@ -516,6 +516,59 @@ begin
 end;
 $$;
 
+drop function if exists public.host_end_game(uuid);
+
+create or replace function public.host_end_game(p_game_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  ended_user_ids uuid[];
+begin
+  if auth.uid() is null then
+    raise exception 'A valid session is required';
+  end if;
+
+  perform 1
+  from public.games game
+  where game.id = p_game_id
+    and game.expires_at > now()
+    and exists (
+      select 1
+      from public.game_members member
+      where member.game_id = game.id
+        and member.user_id = auth.uid()
+        and member.role = 'host'
+    )
+  for update;
+
+  if not found then
+    raise exception 'Game not found or host permission denied';
+  end if;
+
+  select coalesce(array_agg(distinct member.user_id), array[]::uuid[])
+  into ended_user_ids
+  from public.game_members member
+  where member.game_id = p_game_id;
+
+  delete from public.games
+  where id = p_game_id;
+
+  delete from auth.users as user_row
+  where user_row.is_anonymous is true
+    and user_row.id = any(ended_user_ids)
+    and not exists (
+      select 1
+      from public.game_members member
+      join public.games game on game.id = member.game_id
+      where member.user_id = user_row.id
+        and game.expires_at > now()
+    );
+end;
+$$;
+
 drop function if exists public.join_game(text, text, text);
 
 create or replace function public.join_game(
@@ -872,6 +925,7 @@ revoke all on function public.create_game(text, integer, text, text[]) from publ
 revoke all on function public.get_joinable_game(text) from public;
 revoke all on function public.join_host(text, text) from public;
 revoke all on function public.host_start_game(uuid) from public;
+revoke all on function public.host_end_game(uuid) from public;
 revoke all on function public.join_game(text, text, text) from public;
 revoke all on function public.join_display(text, text) from public;
 revoke all on function public.update_my_portrait(uuid, text) from public;
@@ -885,6 +939,7 @@ grant execute on function public.create_game(text, integer, text, text[])
 grant execute on function public.get_joinable_game(text) to authenticated;
 grant execute on function public.join_host(text, text) to authenticated;
 grant execute on function public.host_start_game(uuid) to authenticated;
+grant execute on function public.host_end_game(uuid) to authenticated;
 grant execute on function public.join_game(text, text, text) to authenticated;
 grant execute on function public.join_display(text, text) to authenticated;
 grant execute on function public.update_my_portrait(uuid, text) to authenticated;

@@ -16,6 +16,7 @@ import {
   Shield,
   Skull,
   Sparkles,
+  Trash2,
   UserRound,
   UsersRound,
   Wifi,
@@ -36,6 +37,7 @@ import {
   CloudGame,
   JoinableCloudGame,
   createCloudGame,
+  endCloudGame,
   ensureAnonymousSession,
   isCloudConfigured,
   joinCloudGame,
@@ -327,6 +329,9 @@ function buildHostUrl(code: string, hostKey: string) {
 
 function friendlyCloudError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
+  if (/Game not found or host permission denied/i.test(message)) {
+    return "This game could not be ended. It may have expired or your host access is no longer valid.";
+  }
   if (/invalid or has expired/i.test(message)) {
     return "That game code is invalid or the session has expired.";
   }
@@ -418,6 +423,23 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
   const [error, setError] = useState("");
   const [syncError, setSyncError] = useState("");
 
+  const clearOnlineGame = (message = "") => {
+    localStorage.removeItem(ONLINE_SESSION_STORAGE_KEY);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("game");
+    url.searchParams.delete("display");
+    url.searchParams.delete("key");
+    url.searchParams.delete("host");
+    url.searchParams.delete("hostKey");
+    window.history.replaceState({}, "", url);
+    setGame(null);
+    setPlayers([]);
+    setSession(null);
+    setError(message);
+    setSyncError("");
+    setStage("entry");
+  };
+
   const refreshPlayers = async (gameId: string) => {
     const nextPlayers = await loadCloudPlayers(gameId);
     setPlayers(nextPlayers);
@@ -428,7 +450,11 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
       loadCloudGame(gameId),
       loadCloudPlayers(gameId),
     ]);
-    if (nextGame) setGame(nextGame);
+    if (!nextGame) {
+      clearOnlineGame("This game has ended and is no longer available.");
+      return;
+    }
+    setGame(nextGame);
     setPlayers(nextPlayers);
   };
 
@@ -545,7 +571,11 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
     const roundPoll = window.setInterval(() => {
       void loadCloudGame(game.id)
         .then((nextGame) => {
-          if (nextGame) setGame(nextGame);
+          if (nextGame) {
+            setGame(nextGame);
+          } else {
+            clearOnlineGame("This game has ended and is no longer available.");
+          }
         })
         .catch((refreshError) =>
           setSyncError(friendlyCloudError(refreshError)),
@@ -692,19 +722,20 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
   };
 
   const leaveGame = () => {
-    localStorage.removeItem(ONLINE_SESSION_STORAGE_KEY);
-    const url = new URL(window.location.href);
-    url.searchParams.delete("game");
-    url.searchParams.delete("display");
-    url.searchParams.delete("key");
-    url.searchParams.delete("host");
-    url.searchParams.delete("hostKey");
-    window.history.replaceState({}, "", url);
-    setGame(null);
-    setPlayers([]);
-    setSession(null);
-    setError("");
-    setStage("entry");
+    clearOnlineGame();
+  };
+
+  const endGame = async () => {
+    if (!game || session?.role !== "host") return;
+    setSyncError("");
+    try {
+      await endCloudGame(game.id);
+      devLog("Shared game ended and deleted", { gameId: game.id });
+      clearOnlineGame();
+    } catch (endError) {
+      setSyncError(friendlyCloudError(endError));
+      throw endError;
+    }
   };
 
   const syncPlayers = (nextPlayers: Player[]) => {
@@ -864,6 +895,7 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
       }}
       onRoundChange={session.role === "host" ? changeRound : undefined}
       onGameStart={session.role === "host" ? beginGame : undefined}
+      onGameEnd={session.role === "host" ? endGame : undefined}
       syncError={syncError}
     />
   );
@@ -1729,6 +1761,7 @@ function Hall({
   onlineGame,
   onRoundChange,
   onGameStart,
+  onGameEnd,
   syncError,
 }: {
   players: Player[];
@@ -1744,6 +1777,7 @@ function Hall({
   };
   onRoundChange?: (round: number) => void;
   onGameStart?: () => Promise<void>;
+  onGameEnd?: () => Promise<void>;
   syncError?: string;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
@@ -1754,6 +1788,7 @@ function Hall({
   const [localRound, setLocalRound] = useState(1);
   const [toast, setToast] = useState("");
   const [startingGame, setStartingGame] = useState(false);
+  const [endingGame, setEndingGame] = useState(false);
   const isHost = session.role === "host";
   const isDisplay = session.role === "display";
   const isGameStarted = !onlineGame || onlineGame.status === "active";
@@ -1782,6 +1817,22 @@ function Hall({
       setToast("The game could not be started. Please try again.");
     } finally {
       setStartingGame(false);
+    }
+  };
+
+  const endOnlineGame = async () => {
+    if (!onGameEnd || endingGame) return;
+    const confirmed = window.confirm(
+      "End this game now? This permanently deletes every portrait, contestant, host connection, and TV connection. This cannot be undone.",
+    );
+    if (!confirmed) return;
+
+    setEndingGame(true);
+    try {
+      await onGameEnd();
+    } catch {
+      setToast("The game could not be ended. Nothing was deleted.");
+      setEndingGame(false);
     }
   };
 
@@ -2030,10 +2081,20 @@ function Hall({
           )}
           <div className="host-actions">
             {onlineGame ? (
-              <span className="live-sync-label">
-                <Wifi size={15} />
-                {isGameStarted ? "Live on every screen" : "Invitation open"}
-              </span>
+              <>
+                <span className="live-sync-label">
+                  <Wifi size={15} />
+                  {isGameStarted ? "Live on every screen" : "Invitation open"}
+                </span>
+                <button
+                  className="end-game-button"
+                  onClick={endOnlineGame}
+                  disabled={endingGame}
+                >
+                  <Trash2 size={14} />
+                  {endingGame ? "Ending…" : "End game"}
+                </button>
+              </>
             ) : (
               <>
                 <button className="text-button" onClick={resetHall}>

@@ -156,6 +156,13 @@ export async function startCloudGame(gameId: string): Promise<CloudGame> {
   return sharedGame;
 }
 
+export async function endCloudGame(gameId: string): Promise<void> {
+  const { error } = await client().rpc("host_end_game", {
+    p_game_id: gameId,
+  });
+  if (error) throw error;
+}
+
 export async function joinCloudGame(input: {
   code: string;
   name: string;

@@ -724,6 +724,31 @@ button {
   gap: 13px;
 }
 
+.end-game-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  color: #b9857f;
+  background: rgba(105, 22, 20, 0.18);
+  border: 1px solid rgba(196, 69, 56, 0.28);
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.end-game-button:hover {
+  color: #efaaa1;
+  border-color: rgba(224, 91, 78, 0.52);
+}
+
+.end-game-button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
 .round-selector {
   display: flex;
   align-items: center;
