@@ -1065,7 +1065,7 @@ function GameEntryScreen({
           <p className="eyebrow">Begin tonight’s game</p>
           <h2>Start or join</h2>
           <p className="panel-copy">
-            Hosts create the room. Contestants enter the code on the screen.
+            Hosts create an invitation. Contestants enter its public game code.
           </p>
 
           <form onSubmit={start}>
@@ -1142,7 +1142,7 @@ function GameEntryScreen({
               type="submit"
               disabled={busy}
             >
-              {busy ? "Preparing the hall…" : "Start as host"}
+              {busy ? "Creating invitation…" : "Create 72-hour invitation"}
               <Crown size={16} />
             </button>
           </form>
