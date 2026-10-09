@@ -1973,6 +1973,142 @@ footer span {
   font-size: 0.65rem;
 }
 
+.tv-mode {
+  height: 100vh;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 40%, rgba(106, 36, 20, 0.12), transparent 35rem),
+    #100704;
+}
+
+.tv-mode .site-header {
+  min-height: 58px;
+  padding-right: 24px;
+  padding-left: 24px;
+}
+
+.tv-mode .mini-crest {
+  width: 30px;
+  height: 30px;
+}
+
+.tv-mode .brand {
+  font-size: 1.05rem;
+}
+
+.tv-mode .hero,
+.tv-mode .online-lobby,
+.tv-mode .host-bar,
+.tv-mode .player-notice,
+.tv-mode .sync-error,
+.tv-mode footer {
+  display: none;
+}
+
+.tv-mode .gallery-section {
+  display: flex;
+  width: 100%;
+  height: calc(100vh - 58px);
+  margin: 0;
+  padding: 12px 20px 16px;
+  flex-direction: column;
+}
+
+.tv-mode .gallery-heading {
+  flex: 0 0 56px;
+  align-items: center;
+  margin: 0;
+}
+
+.tv-mode .gallery-heading .eyebrow {
+  margin-bottom: 1px;
+  font-size: 0.54rem;
+}
+
+.tv-mode .gallery-heading h2 {
+  font-size: 1.85rem;
+  line-height: 1;
+}
+
+.tv-mode .filter-tabs {
+  display: none;
+}
+
+.tv-mode .portrait-grid {
+  display: grid;
+  flex: 1;
+  grid-template-columns: repeat(var(--tv-columns), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--tv-rows), minmax(0, 1fr));
+  align-content: center;
+  gap: 10px;
+  min-height: 0;
+}
+
+.tv-mode .portrait-card {
+  align-self: center;
+  width: 100%;
+  height: 100%;
+  max-height: 520px;
+  min-height: 0;
+  animation: none;
+}
+
+.tv-mode .portrait-frame {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  padding: 6px;
+  flex-direction: column;
+}
+
+.tv-mode .portrait-image-wrap {
+  flex: 1;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+
+.tv-mode .portrait-plaque {
+  flex: 0 0 42px;
+  padding: 15px 4px 5px;
+}
+
+.tv-mode .portrait-plaque h3 {
+  overflow: hidden;
+  font-size: clamp(0.86rem, 1.45vw, 1.45rem);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tv-mode .corner {
+  width: 17px;
+  height: 17px;
+}
+
+.tv-mode .cross {
+  height: clamp(9px, 1.1vw, 16px);
+}
+
+.tv-mode .fate-ribbon {
+  min-width: 72%;
+  padding: 5px 8px;
+}
+
+.tv-mode .fate-ribbon strong {
+  font-size: clamp(0.58rem, 0.9vw, 0.9rem);
+}
+
+.tv-mode .fate-ribbon small {
+  font-size: clamp(0.36rem, 0.48vw, 0.48rem);
+}
+
+.tv-mode .host-hover-label {
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  min-height: 30px;
+  font-size: 0.5rem;
+}
+
 @media (max-width: 1020px) {
   .login-page {
     grid-template-columns: 1fr 410px;

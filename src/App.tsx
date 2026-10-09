@@ -8,6 +8,8 @@ import {
   Crown,
   Flame,
   LogOut,
+  Maximize2,
+  Minimize2,
   Plus,
   QrCode,
   RotateCcw,
@@ -1031,6 +1033,7 @@ function Hall({
   const [selected, setSelected] = useState<Player | null>(null);
   const [showRules, setShowRules] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [tvMode, setTvMode] = useState(false);
   const [toast, setToast] = useState("");
   const isHost = session.role === "host";
   const currentPlayer = players.find((player) => player.id === session.playerId);
@@ -1098,8 +1101,40 @@ function Hall({
     setToast("The original cast has been restored.");
   };
 
+  const toggleTvMode = async () => {
+    if (tvMode) {
+      setTvMode(false);
+      if (document.fullscreenElement) {
+        await document.exitFullscreen().catch(() => undefined);
+      }
+      return;
+    }
+
+    setFilter("all");
+    setTvMode(true);
+    await document.documentElement.requestFullscreen?.().catch(() => undefined);
+  };
+
+  const tvColumns =
+    players.length <= 2
+      ? Math.max(players.length, 1)
+      : players.length <= 4
+        ? 4
+        : players.length <= 8
+          ? 4
+          : players.length <= 12
+            ? 6
+            : players.length <= 16
+              ? 8
+              : players.length <= 18
+                ? 6
+                : players.length <= 24
+                  ? 8
+                  : 10;
+  const tvRows = Math.max(1, Math.ceil(players.length / tvColumns));
+
   return (
-    <main className="hall-page">
+    <main className={`hall-page ${tvMode ? "tv-mode" : ""}`}>
       <header className="site-header">
         <a className="brand" href="#top" aria-label="Traitors Hall of Fame">
           <span className="mini-crest">
@@ -1111,6 +1146,12 @@ function Hall({
           </span>
         </a>
         <nav>
+          {isHost && (
+            <button className="nav-button tv-mode-button" onClick={toggleTvMode}>
+              {tvMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              {tvMode ? "Exit TV mode" : "TV mode"}
+            </button>
+          )}
           <button className="nav-button" onClick={() => setShowRules(true)}>
             <CircleHelp size={16} />
             Rules
@@ -1230,8 +1271,10 @@ function Hall({
       <section className="gallery-section">
         <div className="gallery-heading">
           <div>
-            <p className="eyebrow">Season portrait gallery</p>
-            <h2>The castle remembers everyone</h2>
+            <p className="eyebrow">
+              {tvMode ? onlineGame?.title ?? "Season portrait gallery" : "Season portrait gallery"}
+            </p>
+            <h2>{tvMode ? "Hall of Fame" : "The castle remembers everyone"}</h2>
           </div>
           <div className="filter-tabs" aria-label="Filter contestants">
             {(["all", "active", "fallen"] as Filter[]).map((option) => (
@@ -1250,7 +1293,15 @@ function Hall({
           </div>
         </div>
 
-        <div className="portrait-grid">
+        <div
+          className="portrait-grid"
+          style={
+            {
+              "--tv-columns": tvColumns,
+              "--tv-rows": tvRows,
+            } as React.CSSProperties
+          }
+        >
           {filteredPlayers.map((player, index) => {
             const canEdit = isHost || session.playerId === player.id;
             return (

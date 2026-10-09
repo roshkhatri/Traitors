@@ -25,6 +25,8 @@ offers the original same-browser demo. The demo host key is `2026`.
 - The player identity and host identity persist in their browsers.
 - The game expires 48 hours after it is created.
 - Supabase Realtime updates the projected hall as players join or change photos.
+- The host can enable TV mode to hide setup panels and fit the full cast into
+  an adaptive fullscreen grid.
 
 A second public authentication QR is intentionally not used. If host controls
 are later needed on another device, the safer design is a private, single-use
