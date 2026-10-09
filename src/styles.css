@@ -1654,6 +1654,7 @@ footer span {
 .start-game-fields {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 105px;
+  align-items: end;
   gap: 10px;
 }
 
@@ -1664,6 +1665,10 @@ footer span {
 .start-game-fields.host-fields,
 .roster-field {
   margin-top: 12px;
+}
+
+.start-game-fields.host-fields {
+  grid-template-columns: minmax(0, 1fr) 120px;
 }
 
 .host-email-field {
@@ -1732,23 +1737,16 @@ footer span {
 
 .entry-error {
   margin: 15px 0 0;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .returning-player-note {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
   margin: 13px 0 0;
   color: #756653;
   font-size: 0.57rem;
   line-height: 1.5;
   text-align: center;
-}
-
-.returning-player-note svg {
-  flex: 0 0 auto;
-  color: #a68b5c;
 }
 
 .display-entry-link {

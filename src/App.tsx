@@ -1263,7 +1263,6 @@ function GameEntryScreen({
             </button>
           </form>
           <p className="returning-player-note">
-            <UserRound size={13} />
             Returning on the same phone? Open this page again to reconnect
             automatically.
           </p>
