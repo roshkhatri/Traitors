@@ -24,6 +24,9 @@ offers the original same-browser demo. The demo host key is `2026`.
   controller.
 - The host receives a separate private host QR, link, and manual code. Opening
   it on another device grants that device host controls for the same game.
+- The optional host email stays on the creating device. **Email host access**
+  opens a pre-addressed draft containing both the private host link and the
+  public contestant invitation; the creator reviews it and taps Send.
 - The host uses **Pair a TV display** to open a private, read-only hall on the
   television. The pairing key is removed from the TV address after connecting.
 - The host controller shows one separate public QR code and human-readable game

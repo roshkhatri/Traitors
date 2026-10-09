@@ -8,6 +8,7 @@ import {
   Crown,
   Flame,
   LogOut,
+  Mail,
   Maximize2,
   Minimize2,
   Plus,
@@ -81,10 +82,12 @@ type OnlineSession = {
   playerId?: string;
   displayKey?: string;
   hostKey?: string;
+  hostEmail?: string;
 };
 
 type StartGameInput = {
   hostName: string;
+  hostEmail: string;
   eventName: string;
   honoree: string;
   totalRounds: number;
@@ -325,6 +328,50 @@ function buildHostUrl(code: string, hostKey: string) {
   url.searchParams.set("host", code);
   url.searchParams.set("hostKey", hostKey);
   return url.toString();
+}
+
+function buildHostAccessEmailUrl(
+  game: CloudGame & {
+    joinUrl: string;
+    hostUrl: string;
+    hostKey: string;
+    hostEmail?: string;
+  },
+) {
+  const subject = `Your private Traitors host access — ${game.title}`;
+  const expiry = new Date(game.expiresAt).toLocaleString();
+  const timing =
+    game.status === "lobby"
+      ? "The contestant invitation remains open for up to 72 hours. Starting the game begins its 48-hour window."
+      : "The game is live and remains available until its 48-hour window ends.";
+  const body = [
+    `Hi ${game.hostName},`,
+    "",
+    "Your Traitors Hall of Fame game is ready.",
+    "",
+    "HOST CONTROLS — KEEP PRIVATE",
+    game.hostUrl,
+    "",
+    `Game code: ${displayGameCode(game.code)}`,
+    `Private host code: ${displayHostKey(game.hostKey)}`,
+    "",
+    "PLAYER INVITATION — SHARE WITH CONTESTANTS",
+    game.joinUrl,
+    "",
+    "Contestants can use the player link to choose their name and upload a photo.",
+    "",
+    timing,
+    `Current expiry: ${expiry}`,
+    "",
+    "Anyone with the private host link can control or delete the game. Do not share it with contestants.",
+    "",
+    "The Traitors Hall of Fame",
+  ].join("\n");
+  const recipient = game.hostEmail?.trim() ?? "";
+
+  return `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(
+    subject,
+  )}&body=${encodeURIComponent(body)}`;
 }
 
 function friendlyCloudError(error: unknown) {
@@ -602,6 +649,7 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
         gameId: created.id,
         displayKey: created.displayKey,
         hostKey: created.hostKey,
+        hostEmail: input.hostEmail.trim() || undefined,
       };
       localStorage.setItem(
         ONLINE_SESSION_STORAGE_KEY,
@@ -891,6 +939,7 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
             ? buildHostUrl(game.code, session.hostKey)
             : undefined,
         hostKey: session.role === "host" ? session.hostKey : undefined,
+        hostEmail: session.role === "host" ? session.hostEmail : undefined,
       }}
       onRoundChange={session.role === "host" ? changeRound : undefined}
       onGameStart={session.role === "host" ? beginGame : undefined}
@@ -1023,6 +1072,7 @@ function GameEntryScreen({
   onDisplay: () => void;
 }) {
   const [hostName, setHostName] = useState(DEFAULT_HOST_NAME);
+  const [hostEmail, setHostEmail] = useState("");
   const [eventName, setEventName] = useState(DEFAULT_EVENT);
   const [honoree, setHonoree] = useState(DEFAULT_HONOREE);
   const [rosterText, setRosterText] = useState(DEFAULT_ROSTER.join("\n"));
@@ -1036,6 +1086,7 @@ function GameEntryScreen({
     try {
       await onStart({
         hostName,
+        hostEmail,
         eventName,
         honoree,
         totalRounds,
@@ -1152,6 +1203,21 @@ function GameEntryScreen({
                 </div>
               </label>
             </div>
+            <label className="field host-email-field">
+              <span>
+                Host email <small>Optional</small>
+              </span>
+              <input
+                type="email"
+                value={hostEmail}
+                maxLength={254}
+                onChange={(event) => setHostEmail(event.target.value)}
+                placeholder="host@example.com"
+              />
+              <small>
+                Used only on this device to address the host-access email.
+              </small>
+            </label>
             <label className="field roster-field">
               <span>
                 Guest list <small>{parseRoster(rosterText).length} names</small>
@@ -1773,6 +1839,7 @@ function Hall({
     displayKey?: string;
     hostUrl?: string;
     hostKey?: string;
+    hostEmail?: string;
   };
   onRoundChange?: (round: number) => void;
   onGameStart?: () => Promise<void>;
@@ -2305,6 +2372,7 @@ function OnlineLobby({
     displayKey?: string;
     hostUrl?: string;
     hostKey?: string;
+    hostEmail?: string;
   };
   playerCount: number;
   claimedCount: number;
@@ -2313,6 +2381,14 @@ function OnlineLobby({
   const [showDisplayPairing, setShowDisplayPairing] = useState(false);
   const [showHostAccess, setShowHostAccess] = useState(false);
   const isGameStarted = game.status === "active";
+  const hostEmailUrl =
+    game.hostUrl && game.hostKey
+      ? buildHostAccessEmailUrl({
+          ...game,
+          hostUrl: game.hostUrl,
+          hostKey: game.hostKey,
+        })
+      : undefined;
   const hoursRemaining = Math.max(
     0,
     Math.ceil((new Date(game.expiresAt).getTime() - Date.now()) / 3_600_000),
@@ -2368,6 +2444,12 @@ function OnlineLobby({
               <Crown size={15} />
               Private host access
             </button>
+          )}
+          {hostEmailUrl && (
+            <a className="pair-tv-button" href={hostEmailUrl}>
+              <Mail size={15} />
+              Email host access
+            </a>
           )}
           {game.displayUrl && game.displayKey && (
             <button
@@ -2438,8 +2520,10 @@ function HostAccessModal({
   onClose,
 }: {
   game: CloudGame & {
+    joinUrl: string;
     hostUrl: string;
     hostKey: string;
+    hostEmail?: string;
   };
   onClose: () => void;
 }) {
@@ -2484,6 +2568,13 @@ function HostAccessModal({
         {copied ? <Check size={16} /> : <Copy size={16} />}
         {copied ? "Host link copied" : "Copy private host link"}
       </button>
+      <a
+        className="secondary-button full-button email-host-link"
+        href={buildHostAccessEmailUrl(game)}
+      >
+        <Mail size={16} />
+        Email host and player links
+      </a>
     </ModalShell>
   );
 }

@@ -1666,6 +1666,21 @@ footer span {
   margin-top: 12px;
 }
 
+.host-email-field {
+  margin-top: 12px;
+}
+
+.host-email-field > span {
+  display: flex;
+  justify-content: space-between;
+}
+
+.host-email-field > span small,
+.host-email-field > small {
+  color: #7d6a53;
+  font-weight: 500;
+}
+
 .roster-field > span {
   display: flex;
   justify-content: space-between;
@@ -2083,6 +2098,7 @@ footer span {
   font-size: 0.56rem;
   font-weight: 700;
   letter-spacing: 0.06em;
+  text-decoration: none;
   text-transform: uppercase;
 }
 
@@ -2096,6 +2112,11 @@ footer span {
   align-items: center;
   gap: 9px;
   flex-wrap: wrap;
+}
+
+.email-host-link {
+  margin-top: 10px;
+  text-decoration: none;
 }
 
 .start-game-button {
