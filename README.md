@@ -1,8 +1,9 @@
 # Traitors Hall of Fame
 
 An interactive, real-time portrait hall for a social-deduction game. A host
-starts a 48-hour game and displays a join QR code. Contestants scan it, add
-their name and photo, and appear on the host screen automatically.
+opens a 72-hour invitation window and shares a join QR code. Contestants scan
+it, add their name and photo, and appear on the host screen automatically.
+When the host starts the game, a new 48-hour deletion window begins.
 
 ## Run locally
 
@@ -21,6 +22,8 @@ offers the original same-browser demo. The demo host key is `2026`.
 - The host enters the event, who it is for, their own name, the guest list,
   and the number of elimination rounds. That phone becomes the private host
   controller.
+- The host receives a separate private host QR, link, and manual code. Opening
+  it on another device grants that device host controls for the same game.
 - The host uses **Pair a TV display** to open a private, read-only hall on the
   television. The pairing key is removed from the TV address after connecting.
 - The host controller shows one separate public QR code and human-readable game
@@ -30,22 +33,27 @@ offers the original same-browser demo. The demo host key is `2026`.
   QR, choose an unclaimed name, and add a compressed photo. No email or
   password is requested.
 - The player identity and host identity persist in their browsers.
-- The game expires 48 hours after it is created.
-- An hourly database cleanup removes expired games and deletes anonymous
-  identities older than 48 hours once they are no longer in an active game.
+- Before the game starts, invitations and photos remain available for up to
+  72 hours.
+- Pressing **Start game** begins the live phase and resets the deletion
+  deadline to 48 hours from that moment.
+- An hourly database cleanup removes the expired game, portraits, memberships,
+  and associated anonymous identities.
 - Supabase Realtime updates the projected hall as players join or change photos.
 - The host selects the active elimination round from the phone. The TV displays
   “Round X of Y,” and each crossed portrait records the round it happened.
 - The host can enable TV mode to hide setup panels and fit the full cast into
   an adaptive fullscreen grid.
 
-The two codes have deliberately different permissions:
+The three access links have deliberately different permissions:
 
 - **Player QR:** public; allows joining and editing only that player’s photo.
+- **Host link/code:** private; grants full host controls on another device.
 - **TV pairing link/key:** private; allows viewing the live hall but cannot
   change a portrait or contestant fate.
 
-Host permissions never leave the phone that created the game.
+Host permissions are granted only to the creator and devices that authenticate
+with the private host code.
 
 ## Free shared database setup
 
@@ -58,7 +66,7 @@ Host permissions never leave the phone that created the game.
 
 The SQL creates short-lived games, membership-based Row Level Security, and
 restricted database functions. Players may update only their own portraits;
-only the game creator may change contestant outcomes.
+only authenticated host devices may start the game or change outcomes.
 
 ## Publish with GitHub Pages
 

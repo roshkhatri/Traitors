@@ -40,11 +40,14 @@ import {
   isCloudConfigured,
   joinCloudGame,
   joinCloudDisplay,
+  joinCloudHost,
   loadCloudGame,
   loadJoinableCloudGame,
   loadCloudPlayers,
   normalizeDisplayKey,
   normalizeGameCode,
+  normalizeHostKey,
+  startCloudGame,
   subscribeToCloudPlayers,
   updateCloudFate,
   updateCloudRound,
@@ -75,6 +78,7 @@ type OnlineSession = {
   gameId: string;
   playerId?: string;
   displayKey?: string;
+  hostKey?: string;
 };
 
 type StartGameInput = {
@@ -314,13 +318,23 @@ function buildDisplayUrl(code: string, displayKey: string) {
   return url.toString();
 }
 
+function buildHostUrl(code: string, hostKey: string) {
+  const url = new URL(import.meta.env.BASE_URL, window.location.origin);
+  url.searchParams.set("host", code);
+  url.searchParams.set("hostKey", hostKey);
+  return url.toString();
+}
+
 function friendlyCloudError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (/invalid or has expired/i.test(message)) {
-    return "That game code is invalid or the 48-hour session has expired.";
+    return "That game code is invalid or the session has expired.";
   }
   if (/pairing key|TV pairing/i.test(message)) {
     return "The game code or private TV pairing key is incorrect or expired.";
+  }
+  if (/host access|host permission/i.test(message)) {
+    return "The game code or private host code is incorrect or expired.";
   }
   if (/anonymous sign-ins/i.test(message)) {
     return "Anonymous game access is not enabled in Supabase yet.";
@@ -345,6 +359,12 @@ function displayGameCode(code: string) {
 function displayPairingKey(key: string) {
   return key.length === 12
     ? `${key.slice(0, 4)}-${key.slice(4, 8)}-${key.slice(8)}`
+    : key;
+}
+
+function displayHostKey(key: string) {
+  return key.length === 16
+    ? `${key.slice(0, 4)}-${key.slice(4, 8)}-${key.slice(8, 12)}-${key.slice(12)}`
     : key;
 }
 
@@ -382,8 +402,14 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
   const initialDisplayKey = normalizeDisplayKey(
     new URLSearchParams(window.location.search).get("key") ?? "",
   );
+  const initialHostCode = normalizeGameCode(
+    new URLSearchParams(window.location.search).get("host") ?? "",
+  );
+  const initialHostKey = normalizeHostKey(
+    new URLSearchParams(window.location.search).get("hostKey") ?? "",
+  );
   const [stage, setStage] = useState<
-    "loading" | "setup" | "entry" | "join" | "display" | "game"
+    "loading" | "setup" | "entry" | "join" | "host" | "display" | "game"
   >(isCloudConfigured ? "loading" : "setup");
   const [game, setGame] = useState<CloudGame | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -413,6 +439,31 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
     const boot = async () => {
       try {
         await ensureAnonymousSession();
+        if (initialHostCode && initialHostKey) {
+          const hostGame = await joinCloudHost({
+            code: initialHostCode,
+            hostKey: initialHostKey,
+          });
+          if (!cancelled) {
+            const hostSession: OnlineSession = {
+              role: "host",
+              gameId: hostGame.id,
+              hostKey: initialHostKey,
+            };
+            localStorage.setItem(
+              ONLINE_SESSION_STORAGE_KEY,
+              JSON.stringify(hostSession),
+            );
+            const cleanUrl = new URL(window.location.href);
+            cleanUrl.searchParams.delete("hostKey");
+            window.history.replaceState({}, "", cleanUrl);
+            setGame(hostGame);
+            setSession(hostSession);
+            await refreshPlayers(hostGame.id);
+            if (!cancelled) setStage("game");
+          }
+          return;
+        }
         if (initialDisplayCode && initialDisplayKey) {
           const displayGame = await joinCloudDisplay({
             code: initialDisplayCode,
@@ -456,9 +507,11 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
           setStage(
             initialCode
               ? "join"
-              : initialDisplayCode
-                ? "display"
-                : "entry",
+              : initialHostCode
+                ? "host"
+                : initialDisplayCode
+                  ? "display"
+                  : "entry",
           );
         }
       } catch (bootError) {
@@ -467,9 +520,11 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
           setStage(
             initialCode
               ? "join"
-              : initialDisplayCode
-                ? "display"
-                : "entry",
+              : initialHostCode
+                ? "host"
+                : initialDisplayCode
+                  ? "display"
+                  : "entry",
           );
         }
       }
@@ -516,6 +571,7 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
         role: "host",
         gameId: created.id,
         displayKey: created.displayKey,
+        hostKey: created.hostKey,
       };
       localStorage.setItem(
         ONLINE_SESSION_STORAGE_KEY,
@@ -599,12 +655,50 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
     }
   };
 
+  const connectHost = async (code: string, hostKey: string) => {
+    setError("");
+    try {
+      const connectedGame = await joinCloudHost({ code, hostKey });
+      const hostSession: OnlineSession = {
+        role: "host",
+        gameId: connectedGame.id,
+        hostKey: normalizeHostKey(hostKey),
+      };
+      localStorage.setItem(
+        ONLINE_SESSION_STORAGE_KEY,
+        JSON.stringify(hostSession),
+      );
+      setGame(connectedGame);
+      setSession(hostSession);
+      await refreshPlayers(connectedGame.id);
+      setStage("game");
+      devLog("Host controls paired", { gameId: connectedGame.id });
+    } catch (hostError) {
+      setError(friendlyCloudError(hostError));
+    }
+  };
+
+  const beginGame = async () => {
+    if (!game || session?.role !== "host") return;
+    setSyncError("");
+    try {
+      const startedGame = await startCloudGame(game.id);
+      setGame(startedGame);
+      devLog("Shared game started", { gameId: game.id });
+    } catch (startError) {
+      setSyncError(friendlyCloudError(startError));
+      throw startError;
+    }
+  };
+
   const leaveGame = () => {
     localStorage.removeItem(ONLINE_SESSION_STORAGE_KEY);
     const url = new URL(window.location.href);
     url.searchParams.delete("game");
     url.searchParams.delete("display");
     url.searchParams.delete("key");
+    url.searchParams.delete("host");
+    url.searchParams.delete("hostKey");
     window.history.replaceState({}, "", url);
     setGame(null);
     setPlayers([]);
@@ -688,6 +782,10 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
         error={error}
         onStart={startGame}
         onJoin={openJoin}
+        onHost={() => {
+          setError("");
+          setStage("host");
+        }}
         onDisplay={() => {
           setError("");
           setStage("display");
@@ -725,6 +823,20 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
     );
   }
 
+  if (stage === "host") {
+    return (
+      <HostConnectScreen
+        initialCode={initialHostCode}
+        error={error}
+        onConnect={connectHost}
+        onBack={() => {
+          setError("");
+          setStage("entry");
+        }}
+      />
+    );
+  }
+
   if (!game || !session) {
     return <LoadingScreen />;
   }
@@ -744,8 +856,14 @@ function OnlineApp({ onPreview }: { onPreview: () => void }) {
             : undefined,
         displayKey:
           session.role === "host" ? session.displayKey : undefined,
+        hostUrl:
+          session.role === "host" && session.hostKey
+            ? buildHostUrl(game.code, session.hostKey)
+            : undefined,
+        hostKey: session.role === "host" ? session.hostKey : undefined,
       }}
       onRoundChange={session.role === "host" ? changeRound : undefined}
+      onGameStart={session.role === "host" ? beginGame : undefined}
       syncError={syncError}
     />
   );
@@ -864,12 +982,14 @@ function GameEntryScreen({
   error,
   onStart,
   onJoin,
+  onHost,
   onDisplay,
   onPreview,
 }: {
   error: string;
   onStart: (input: StartGameInput) => Promise<void>;
   onJoin: (code: string) => void;
+  onHost: () => void;
   onDisplay: () => void;
   onPreview: () => void;
 }) {
@@ -926,7 +1046,7 @@ function GameEntryScreen({
         </p>
         <div className="live-feature-row">
           <span>
-            <Clock3 size={15} /> 48-hour game
+            <Clock3 size={15} /> 72-hour invite
           </span>
           <span>
             <QrCode size={15} /> QR entry
@@ -1049,6 +1169,10 @@ function GameEntryScreen({
           </form>
 
           {error && <p className="form-error entry-error">{error}</p>}
+          <button className="display-entry-link" onClick={onHost}>
+            <Crown size={14} />
+            Rejoin with a private host code
+          </button>
           <button className="display-entry-link" onClick={onDisplay}>
             <Maximize2 size={14} />
             Connect this screen as the TV display
@@ -1058,6 +1182,92 @@ function GameEntryScreen({
           </button>
         </div>
       </section>
+    </main>
+  );
+}
+
+function HostConnectScreen({
+  initialCode,
+  error,
+  onConnect,
+  onBack,
+}: {
+  initialCode: string;
+  error: string;
+  onConnect: (code: string, hostKey: string) => Promise<void>;
+  onBack: () => void;
+}) {
+  const [code, setCode] = useState(initialCode);
+  const [hostKey, setHostKey] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await onConnect(code, hostKey);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="join-page display-connect-page">
+      <div className="join-card display-connect-card">
+        <button className="join-back" onClick={onBack}>
+          ← Back to game options
+        </button>
+        <div className="join-mark">
+          <Crown size={20} />
+        </div>
+        <p className="eyebrow">Private host access</p>
+        <h1>Rejoin your game</h1>
+        <p className="display-connect-copy">
+          Open the private host link or enter the game code and host code. This
+          device will receive full host controls for the same game.
+        </p>
+        <form onSubmit={submit}>
+          <div className="join-fields">
+            <label className="field compact">
+              <span>Game code</span>
+              <input
+                value={displayGameCode(code)}
+                maxLength={9}
+                onChange={(event) =>
+                  setCode(normalizeGameCode(event.target.value))
+                }
+                placeholder="ABCD-1234"
+                required
+              />
+            </label>
+            <label className="field compact">
+              <span>Private host code</span>
+              <input
+                value={displayHostKey(hostKey)}
+                maxLength={19}
+                onChange={(event) =>
+                  setHostKey(normalizeHostKey(event.target.value))
+                }
+                placeholder="A1B2-C3D4-E5F6-7890"
+                required
+              />
+            </label>
+          </div>
+          {error && <p className="form-error join-error">{error}</p>}
+          <button
+            className="primary-button full-button join-submit"
+            type="submit"
+            disabled={busy}
+          >
+            {busy ? "Opening host controls…" : "Open host controls"}
+            {!busy && <Crown size={15} />}
+          </button>
+        </form>
+        <p className="privacy-note">
+          <Shield size={13} />
+          Keep the host code private—it can control rounds and eliminations.
+        </p>
+      </div>
     </main>
   );
 }
@@ -1244,6 +1454,11 @@ function JoinGameScreen({
           <p className="join-event-label">
             <strong>{joinableGame.title}</strong>
             <span>Hosted by {joinableGame.hostName}</span>
+            <span>
+              {joinableGame.status === "lobby"
+                ? "Photo invitation open · stored for up to 72 hours"
+                : "Game live · data expires within 48 hours"}
+            </span>
           </p>
         )}
 
@@ -1343,7 +1558,7 @@ function JoinGameScreen({
         </form>
         <p className="privacy-note">
           <Shield size={13} />
-          No email or password. This device remembers you for this game.
+          No email or password. Your portrait is removed when this game expires.
         </p>
       </div>
     </main>
@@ -1513,6 +1728,7 @@ function Hall({
   onLogout,
   onlineGame,
   onRoundChange,
+  onGameStart,
   syncError,
 }: {
   players: Player[];
@@ -1523,8 +1739,11 @@ function Hall({
     joinUrl: string;
     displayUrl?: string;
     displayKey?: string;
+    hostUrl?: string;
+    hostKey?: string;
   };
   onRoundChange?: (round: number) => void;
+  onGameStart?: () => Promise<void>;
   syncError?: string;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
@@ -1534,8 +1753,10 @@ function Hall({
   const [tvMode, setTvMode] = useState(session.role === "display");
   const [localRound, setLocalRound] = useState(1);
   const [toast, setToast] = useState("");
+  const [startingGame, setStartingGame] = useState(false);
   const isHost = session.role === "host";
   const isDisplay = session.role === "display";
+  const isGameStarted = !onlineGame || onlineGame.status === "active";
   const currentPlayer = players.find((player) => player.id === session.playerId);
   const currentRound = onlineGame?.currentRound ?? localRound;
   const totalRounds = onlineGame?.totalRounds ?? 3;
@@ -1545,6 +1766,24 @@ function Hall({
     const timer = window.setTimeout(() => setToast(""), 2800);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  const beginOnlineGame = async () => {
+    if (!onGameStart || startingGame) return;
+    const confirmed = window.confirm(
+      "Start the game now? The invitation window will close and all game data will be deleted 48 hours from now.",
+    );
+    if (!confirmed) return;
+
+    setStartingGame(true);
+    try {
+      await onGameStart();
+      setToast("The game is live. The 48-hour countdown has started.");
+    } catch {
+      setToast("The game could not be started. Please try again.");
+    } finally {
+      setStartingGame(false);
+    }
+  };
 
   const activeCount = players.filter((player) => player.status === "active").length;
   const fallenCount = players.length - activeCount;
@@ -1741,7 +1980,13 @@ function Hall({
       )}
 
       {onlineGame && isHost && (
-        <OnlineLobby game={onlineGame} playerCount={players.length} />
+        <OnlineLobby
+          game={onlineGame}
+          playerCount={players.length}
+          claimedCount={
+            players.filter((player) => player.claimed !== false).length
+          }
+        />
       )}
 
       {isHost ? (
@@ -1749,26 +1994,45 @@ function Hall({
           <div className="host-bar-label">
             <span className="host-live-dot" />
             <div>
-              <strong>Host controls are live</strong>
-              <small>Select a portrait to record their fate</small>
+              <strong>
+                {isGameStarted
+                  ? "Host controls are live"
+                  : "Photo collection is open"}
+              </strong>
+              <small>
+                {isGameStarted
+                  ? "Select a portrait to record their fate"
+                  : "Start the game when everyone is ready"}
+              </small>
             </div>
           </div>
-          <RoundSelector
-            currentRound={currentRound}
-            totalRounds={totalRounds}
-            onChange={(round) => {
-              if (onRoundChange) {
-                onRoundChange(round);
-              } else {
-                setLocalRound(round);
-              }
-            }}
-          />
+          {isGameStarted ? (
+            <RoundSelector
+              currentRound={currentRound}
+              totalRounds={totalRounds}
+              onChange={(round) => {
+                if (onRoundChange) {
+                  onRoundChange(round);
+                } else {
+                  setLocalRound(round);
+                }
+              }}
+            />
+          ) : (
+            <button
+              className="primary-button start-game-button"
+              onClick={beginOnlineGame}
+              disabled={startingGame}
+            >
+              <Flame size={16} />
+              {startingGame ? "Starting…" : "Start game · begin 48 hours"}
+            </button>
+          )}
           <div className="host-actions">
             {onlineGame ? (
               <span className="live-sync-label">
                 <Wifi size={15} />
-                Live on every screen
+                {isGameStarted ? "Live on every screen" : "Invitation open"}
               </span>
             ) : (
               <>
@@ -1808,13 +2072,23 @@ function Hall({
         <div className="gallery-heading">
           <div>
             <p className="eyebrow">
-              {tvMode
+              {!isGameStarted
+                ? `Photo collection · ${
+                    onlineGame?.title ?? "Season portrait gallery"
+                  }`
+                : tvMode
                 ? `Elimination round ${currentRound} of ${totalRounds} · ${
                     onlineGame?.title ?? "Season portrait gallery"
                   }`
                 : `Elimination round ${currentRound} of ${totalRounds}`}
             </p>
-            <h2>{tvMode ? "Hall of Fame" : "The castle remembers everyone"}</h2>
+            <h2>
+              {!isGameStarted
+                ? "The guest portraits are gathering"
+                : tvMode
+                  ? "Hall of Fame"
+                  : "The castle remembers everyone"}
+            </h2>
           </div>
           <div className="filter-tabs" aria-label="Filter contestants">
             {(["all", "active", "fallen"] as Filter[]).map((option) => (
@@ -1851,7 +2125,7 @@ function Hall({
                 key={player.id}
                 player={player}
                 index={index}
-                isHost={isHost}
+                isHost={isHost && isGameStarted}
                 canEdit={canEdit}
                 onHostSelect={() => setSelected(player)}
                 onPhoto={(file) => updatePhoto(player, file)}
@@ -1889,7 +2163,7 @@ function Hall({
         </span>
       </footer>
 
-      {selected && isHost && (
+      {selected && isHost && isGameStarted && (
         <FateModal
           player={selected}
           currentRound={currentRound}
@@ -1963,16 +2237,22 @@ function RoundSelector({
 function OnlineLobby({
   game,
   playerCount,
+  claimedCount,
 }: {
   game: CloudGame & {
     joinUrl: string;
     displayUrl?: string;
     displayKey?: string;
+    hostUrl?: string;
+    hostKey?: string;
   };
   playerCount: number;
+  claimedCount: number;
 }) {
   const [copied, setCopied] = useState(false);
   const [showDisplayPairing, setShowDisplayPairing] = useState(false);
+  const [showHostAccess, setShowHostAccess] = useState(false);
+  const isGameStarted = game.status === "active";
   const hoursRemaining = Math.max(
     0,
     Math.ceil((new Date(game.expiresAt).getTime() - Date.now()) / 3_600_000),
@@ -1997,11 +2277,18 @@ function OnlineLobby({
         />
       </div>
       <div className="online-lobby-copy">
-        <p className="eyebrow">Scan to enter the game</p>
-        <h2>Contestants, claim your portrait</h2>
+        <p className="eyebrow">
+          {isGameStarted ? "Game in progress" : "72-hour invitation window"}
+        </p>
+        <h2>
+          {isGameStarted
+            ? "The hall is live"
+            : "Contestants, claim your portrait"}
+        </h2>
         <p>
-          Open your camera, scan the code, choose your name, and add your
-          photo. Portraits update on this screen automatically.
+          {isGameStarted
+            ? "Portraits and status changes remain available until the game’s 48-hour window ends."
+            : "Send this link before the event so guests can choose their name and add a photo. Their portraits remain ready here until you start."}
         </p>
         <p className="lobby-host">Hosted by {game.hostName}</p>
         <div className="game-code-display">
@@ -2012,28 +2299,43 @@ function OnlineLobby({
             {copied ? "Copied" : "Copy link"}
           </button>
         </div>
-        {game.displayUrl && game.displayKey && (
-          <button
-            className="pair-tv-button"
-            onClick={() => setShowDisplayPairing(true)}
-          >
-            <Maximize2 size={15} />
-            Pair a TV display
-          </button>
-        )}
+        <div className="private-access-buttons">
+          {game.hostUrl && game.hostKey && (
+            <button
+              className="pair-tv-button"
+              onClick={() => setShowHostAccess(true)}
+            >
+              <Crown size={15} />
+              Private host access
+            </button>
+          )}
+          {game.displayUrl && game.displayKey && (
+            <button
+              className="pair-tv-button"
+              onClick={() => setShowDisplayPairing(true)}
+            >
+              <Maximize2 size={15} />
+              Pair a TV display
+            </button>
+          )}
+        </div>
       </div>
       <div className="lobby-status">
         <div>
           <UsersRound size={18} />
-          <strong>{playerCount}</strong>
-          <span>{playerCount === 1 ? "guest slot" : "guest slots"}</span>
+          <strong>
+            {claimedCount}/{playerCount}
+          </strong>
+          <span>photos ready</span>
         </div>
         <div>
           <Flame size={18} />
           <strong>
-            {game.currentRound}/{game.totalRounds}
+            {isGameStarted
+              ? `${game.currentRound}/${game.totalRounds}`
+              : "Invite"}
           </strong>
-          <span>round</span>
+          <span>{isGameStarted ? "round" : "phase"}</span>
         </div>
         <div>
           <Clock3 size={18} />
@@ -2042,9 +2344,21 @@ function OnlineLobby({
         </div>
         <small>
           <span className="host-live-dot" />
-          Live
+          {isGameStarted
+            ? "Game live · deletes after 48 hours"
+            : "Collecting photos"}
         </small>
       </div>
+      {showHostAccess && game.hostUrl && game.hostKey && (
+        <HostAccessModal
+          game={{
+            ...game,
+            hostUrl: game.hostUrl,
+            hostKey: game.hostKey,
+          }}
+          onClose={() => setShowHostAccess(false)}
+        />
+      )}
       {showDisplayPairing && game.displayUrl && game.displayKey && (
         <DisplayPairModal
           game={{
@@ -2056,6 +2370,61 @@ function OnlineLobby({
         />
       )}
     </section>
+  );
+}
+
+function HostAccessModal({
+  game,
+  onClose,
+}: {
+  game: CloudGame & {
+    hostUrl: string;
+    hostKey: string;
+  };
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copyLink = async () => {
+    await navigator.clipboard.writeText(game.hostUrl);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  return (
+    <ModalShell onClose={onClose} label="Private host access">
+      <div className="modal-heading">
+        <p className="eyebrow">Private host access</p>
+        <h2>Open controls on another device</h2>
+        <p>
+          Scan this QR code on the host’s phone or enter both codes manually.
+          Anyone with this link can control the game, so do not send it to
+          contestants.
+        </p>
+      </div>
+      <div className="display-pair-content">
+        <div className="display-pair-qr">
+          <QRCodeSVG
+            value={game.hostUrl}
+            size={190}
+            bgColor="#f4e7ca"
+            fgColor="#1a0906"
+            level="M"
+            marginSize={2}
+          />
+        </div>
+        <div className="display-pair-codes">
+          <span>Game code</span>
+          <strong>{displayGameCode(game.code)}</strong>
+          <span>Private host code</span>
+          <strong>{displayHostKey(game.hostKey)}</strong>
+        </div>
+      </div>
+      <button className="primary-button full-button" onClick={copyLink}>
+        {copied ? <Check size={16} /> : <Copy size={16} />}
+        {copied ? "Host link copied" : "Copy private host link"}
+      </button>
+    </ModalShell>
   );
 }
 

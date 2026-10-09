@@ -2066,6 +2066,22 @@ footer span {
   border-color: rgba(222, 182, 101, 0.56);
 }
 
+.private-access-buttons {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.start-game-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 17px;
+}
+
 .lobby-status {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -2548,6 +2564,14 @@ footer span {
     justify-content: space-between;
     width: 100%;
     padding-top: 7px;
+  }
+
+  .start-game-button {
+    width: 100%;
+  }
+
+  .private-access-buttons {
+    justify-content: center;
   }
 
   .round-selector {

@@ -6,6 +6,8 @@ export type CloudGame = {
   title: string;
   hostName: string;
   rosterLocked: boolean;
+  status: "lobby" | "active";
+  startedAt?: string;
   expiresAt: string;
   currentRound: number;
   totalRounds: number;
@@ -25,6 +27,9 @@ export type JoinableCloudGame = {
   hostName: string;
   rosterLocked: boolean;
   availableNames: string[];
+  status: "lobby" | "active";
+  startedAt?: string;
+  expiresAt: string;
 };
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
@@ -70,7 +75,7 @@ export async function createCloudGame(input: {
   hostName: string;
   totalRounds: number;
   roster: string[];
-}): Promise<CloudGame & { displayKey: string }> {
+}): Promise<CloudGame & { displayKey: string; hostKey: string }> {
   await ensureAnonymousSession();
   const { data, error } = await client().rpc("create_game", {
     p_title: input.title.trim() || "The Traitors",
@@ -88,10 +93,13 @@ export async function createCloudGame(input: {
     title: row.game_title,
     hostName: input.hostName.trim() || "The Host",
     rosterLocked: input.roster.length > 0,
+    status: "lobby",
+    startedAt: undefined,
     expiresAt: row.game_expires_at,
     currentRound: row.current_round,
     totalRounds: row.total_rounds,
     displayKey: row.display_key,
+    hostKey: row.host_key,
   };
 }
 
@@ -111,7 +119,41 @@ export async function loadJoinableCloudGame(
     hostName: row.game_host_name,
     rosterLocked: row.roster_locked,
     availableNames: row.available_names ?? [],
+    status: row.game_status,
+    startedAt: row.game_started_at ?? undefined,
+    expiresAt: row.game_expires_at,
   };
+}
+
+export async function joinCloudHost(input: {
+  code: string;
+  hostKey: string;
+}): Promise<CloudGame> {
+  await ensureAnonymousSession();
+  const { data, error } = await client().rpc("join_host", {
+    p_code: normalizeGameCode(input.code),
+    p_host_key: normalizeHostKey(input.hostKey),
+  });
+  if (error) throw error;
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.game_id) {
+    throw new Error("That host access link could not be used.");
+  }
+  const sharedGame = await loadCloudGame(row.game_id);
+  if (!sharedGame) throw new Error("That game has expired.");
+  return sharedGame;
+}
+
+export async function startCloudGame(gameId: string): Promise<CloudGame> {
+  const { error } = await client().rpc("host_start_game", {
+    p_game_id: gameId,
+  });
+  if (error) throw error;
+
+  const sharedGame = await loadCloudGame(gameId);
+  if (!sharedGame) throw new Error("That game has expired.");
+  return sharedGame;
 }
 
 export async function joinCloudGame(input: {
@@ -160,7 +202,7 @@ export async function loadCloudGame(gameId: string): Promise<CloudGame | null> {
   const { data, error } = await client()
     .from("games")
     .select(
-      "id, code, title, host_name, roster_locked, expires_at, current_round, total_rounds",
+      "id, code, title, host_name, roster_locked, status, started_at, expires_at, current_round, total_rounds",
     )
     .eq("id", gameId)
     .gt("expires_at", new Date().toISOString())
@@ -173,6 +215,8 @@ export async function loadCloudGame(gameId: string): Promise<CloudGame | null> {
     title: data.title,
     hostName: data.host_name,
     rosterLocked: data.roster_locked,
+    status: data.status,
+    startedAt: data.started_at ?? undefined,
     expiresAt: data.expires_at,
     currentRound: data.current_round,
     totalRounds: data.total_rounds,
@@ -275,4 +319,8 @@ export function normalizeGameCode(code: string) {
 
 export function normalizeDisplayKey(key: string) {
   return key.toUpperCase().replace(/[^A-F0-9]/g, "").slice(0, 12);
+}
+
+export function normalizeHostKey(key: string) {
+  return key.toUpperCase().replace(/[^A-F0-9]/g, "").slice(0, 16);
 }

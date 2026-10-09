@@ -13,11 +13,20 @@ create table if not exists public.games (
     check (char_length(host_name) between 1 and 40),
   roster_locked boolean not null default false,
   host_user_id uuid not null references auth.users(id) on delete cascade,
+  host_key_hash text,
   display_key_hash text,
+  status text not null default 'lobby'
+    check (status in ('lobby', 'active')),
+  started_at timestamptz,
   current_round smallint not null default 1,
   total_rounds smallint not null default 3,
   created_at timestamptz not null default now(),
-  expires_at timestamptz not null default (now() + interval '48 hours'),
+  expires_at timestamptz not null default (now() + interval '72 hours'),
+  constraint games_lifecycle_check
+    check (
+      (status = 'lobby' and started_at is null)
+      or (status = 'active' and started_at is not null)
+    ),
   constraint games_rounds_check
     check (
       total_rounds between 1 and 10
@@ -29,7 +38,19 @@ alter table public.games
   add column if not exists host_name text not null default 'The Host';
 alter table public.games
   add column if not exists roster_locked boolean not null default false;
+alter table public.games add column if not exists host_key_hash text;
 alter table public.games add column if not exists display_key_hash text;
+alter table public.games add column if not exists status text;
+alter table public.games add column if not exists started_at timestamptz;
+update public.games
+set
+  status = 'active',
+  started_at = coalesce(started_at, created_at)
+where status is null;
+alter table public.games alter column status set default 'lobby';
+alter table public.games alter column status set not null;
+alter table public.games
+  alter column expires_at set default (now() + interval '72 hours');
 alter table public.games
   add column if not exists current_round smallint not null default 1;
 alter table public.games
@@ -45,6 +66,17 @@ alter table public.games drop constraint if exists games_host_name_check;
 alter table public.games
   add constraint games_host_name_check
   check (char_length(host_name) between 1 and 40);
+alter table public.games drop constraint if exists games_status_check;
+alter table public.games
+  add constraint games_status_check
+  check (status in ('lobby', 'active'));
+alter table public.games drop constraint if exists games_lifecycle_check;
+alter table public.games
+  add constraint games_lifecycle_check
+  check (
+    (status = 'lobby' and started_at is null)
+    or (status = 'active' and started_at is not null)
+  );
 
 create table if not exists public.game_members (
   game_id uuid not null references public.games(id) on delete cascade,
@@ -139,7 +171,7 @@ revoke all on public.game_members from anon, authenticated;
 revoke all on public.players from anon, authenticated;
 grant select (
   id, code, title, host_name, roster_locked,
-  current_round, total_rounds, created_at, expires_at
+  status, started_at, current_round, total_rounds, created_at, expires_at
 )
   on public.games to authenticated;
 grant select on public.game_members to authenticated;
@@ -175,7 +207,8 @@ returns table (
   game_expires_at timestamptz,
   current_round integer,
   total_rounds integer,
-  display_key text
+  display_key text,
+  host_key text
 )
 language plpgsql
 security definer
@@ -185,6 +218,7 @@ declare
   created_game public.games;
   next_code text;
   next_display_key text;
+  next_host_key text;
   cleaned_roster text[];
 begin
   if auth.uid() is null then
@@ -238,6 +272,9 @@ begin
     next_display_key := upper(
       substr(encode(extensions.gen_random_bytes(8), 'hex'), 1, 12)
     );
+    next_host_key := upper(
+      substr(encode(extensions.gen_random_bytes(10), 'hex'), 1, 16)
+    );
     begin
       insert into public.games (
         code,
@@ -245,9 +282,13 @@ begin
         host_name,
         roster_locked,
         host_user_id,
+        host_key_hash,
         display_key_hash,
+        status,
+        started_at,
         current_round,
-        total_rounds
+        total_rounds,
+        expires_at
       )
       values (
         next_code,
@@ -255,9 +296,13 @@ begin
         trim(p_host_name),
         cardinality(cleaned_roster) > 0,
         auth.uid(),
+        encode(extensions.digest(next_host_key, 'sha256'), 'hex'),
         encode(extensions.digest(next_display_key, 'sha256'), 'hex'),
+        'lobby',
+        null,
         1,
-        p_total_rounds
+        p_total_rounds,
+        now() + interval '72 hours'
       )
       returning * into created_game;
       exit;
@@ -285,7 +330,8 @@ begin
     created_game.expires_at,
     created_game.current_round::integer,
     created_game.total_rounds::integer,
-    next_display_key;
+    next_display_key,
+    next_host_key;
 end;
 $$;
 
@@ -300,7 +346,8 @@ returns table (
   game_expires_at timestamptz,
   current_round integer,
   total_rounds integer,
-  display_key text
+  display_key text,
+  host_key text
 )
 language sql
 security definer
@@ -322,7 +369,10 @@ returns table (
   game_title text,
   game_host_name text,
   roster_locked boolean,
-  available_names text[]
+  available_names text[],
+  game_status text,
+  game_started_at timestamptz,
+  game_expires_at timestamptz
 )
 language plpgsql
 security definer
@@ -355,11 +405,114 @@ begin
         filter (
           where player.user_id is null
              or player.user_id = auth.uid()
-        ),
+      ),
       array[]::text[]
-    )
+    ),
+    target_game.status,
+    target_game.started_at,
+    target_game.expires_at
   from public.players player
   where player.game_id = target_game.id;
+end;
+$$;
+
+drop function if exists public.join_host(text, text);
+
+create or replace function public.join_host(
+  p_code text,
+  p_host_key text
+)
+returns table (
+  game_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  target_game public.games;
+  normalized_key text;
+begin
+  if auth.uid() is null then
+    raise exception 'A valid session is required';
+  end if;
+
+  normalized_key := upper(
+    regexp_replace(p_host_key, '[^A-F0-9]', '', 'g')
+  );
+  if char_length(normalized_key) <> 16 then
+    raise exception 'The host access key is invalid';
+  end if;
+
+  select *
+  into target_game
+  from public.games
+  where code = upper(regexp_replace(p_code, '[^A-Z0-9]', '', 'g'))
+    and host_key_hash = encode(
+      extensions.digest(normalized_key, 'sha256'),
+      'hex'
+    )
+    and expires_at > now();
+
+  if target_game.id is null then
+    raise exception 'The game code or host access key is invalid or expired';
+  end if;
+
+  insert into public.game_members (game_id, user_id, role)
+  values (target_game.id, auth.uid(), 'host')
+  on conflict on constraint game_members_pkey
+  do update set role = excluded.role;
+
+  return query select target_game.id;
+end;
+$$;
+
+drop function if exists public.host_start_game(uuid);
+
+create or replace function public.host_start_game(p_game_id uuid)
+returns table (
+  game_started_at timestamptz,
+  game_expires_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  started_game public.games;
+begin
+  if auth.uid() is null then
+    raise exception 'A valid session is required';
+  end if;
+
+  update public.games game
+  set
+    status = 'active',
+    started_at = case
+      when game.status = 'lobby' then now()
+      else game.started_at
+    end,
+    expires_at = case
+      when game.status = 'lobby' then now() + interval '48 hours'
+      else game.expires_at
+    end
+  where game.id = p_game_id
+    and game.expires_at > now()
+    and exists (
+      select 1
+      from public.game_members member
+      where member.game_id = game.id
+        and member.user_id = auth.uid()
+        and member.role = 'host'
+    )
+  returning game.* into started_game;
+
+  if not found then
+    raise exception 'Game not found or host permission denied';
+  end if;
+
+  return query
+  select started_game.started_at, started_game.expires_at;
 end;
 $$;
 
@@ -620,8 +773,14 @@ begin
   from public.games game
   where player.id = p_player_id
     and game.id = player.game_id
-    and game.host_user_id = auth.uid()
-    and game.expires_at > now();
+    and game.expires_at > now()
+    and exists (
+      select 1
+      from public.game_members member
+      where member.game_id = game.id
+        and member.user_id = auth.uid()
+        and member.role = 'host'
+    );
 
   if not found then
     raise exception 'Portrait not found or host permission denied';
@@ -657,8 +816,15 @@ begin
   from public.games game
   where player.id = p_player_id
     and game.id = player.game_id
-    and game.host_user_id = auth.uid()
-    and game.expires_at > now();
+    and game.status = 'active'
+    and game.expires_at > now()
+    and exists (
+      select 1
+      from public.game_members member
+      where member.game_id = game.id
+        and member.user_id = auth.uid()
+        and member.role = 'host'
+    );
 
   if not found then
     raise exception 'Contestant not found or host permission denied';
@@ -683,8 +849,15 @@ begin
   update public.games game
   set current_round = p_round
   where game.id = p_game_id
-    and game.host_user_id = auth.uid()
+    and game.status = 'active'
     and game.expires_at > now()
+    and exists (
+      select 1
+      from public.game_members member
+      where member.game_id = game.id
+        and member.user_id = auth.uid()
+        and member.role = 'host'
+    )
     and p_round between 1 and game.total_rounds;
 
   if not found then
@@ -697,6 +870,8 @@ revoke all on function public.make_game_code() from public;
 revoke all on function public.create_game(text, integer) from public;
 revoke all on function public.create_game(text, integer, text, text[]) from public;
 revoke all on function public.get_joinable_game(text) from public;
+revoke all on function public.join_host(text, text) from public;
+revoke all on function public.host_start_game(uuid) from public;
 revoke all on function public.join_game(text, text, text) from public;
 revoke all on function public.join_display(text, text) from public;
 revoke all on function public.update_my_portrait(uuid, text) from public;
@@ -708,6 +883,8 @@ grant execute on function public.create_game(text, integer) to authenticated;
 grant execute on function public.create_game(text, integer, text, text[])
   to authenticated;
 grant execute on function public.get_joinable_game(text) to authenticated;
+grant execute on function public.join_host(text, text) to authenticated;
+grant execute on function public.host_start_game(uuid) to authenticated;
 grant execute on function public.join_game(text, text, text) to authenticated;
 grant execute on function public.join_display(text, text) to authenticated;
 grant execute on function public.update_my_portrait(uuid, text) to authenticated;
@@ -715,18 +892,36 @@ grant execute on function public.host_update_portrait(uuid, text) to authenticat
 grant execute on function public.host_update_fate(uuid, text) to authenticated;
 grant execute on function public.host_set_round(uuid, integer) to authenticated;
 
--- Remove expired games and their short-lived anonymous identities. An older
--- anonymous identity is retained while it still belongs to an active game,
--- allowing the same host phone to safely start another game later.
+-- Remove expired games, portraits, memberships, and their short-lived
+-- anonymous identities. Identities shared with another active game survive.
 create or replace function public.cleanup_expired_games_and_sessions()
 returns void
 language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  expired_user_ids uuid[];
 begin
+  select coalesce(array_agg(distinct member.user_id), array[]::uuid[])
+  into expired_user_ids
+  from public.game_members member
+  join public.games game on game.id = member.game_id
+  where game.expires_at <= now();
+
   delete from public.games
   where expires_at <= now();
+
+  delete from auth.users as user_row
+  where user_row.is_anonymous is true
+    and user_row.id = any(expired_user_ids)
+    and not exists (
+      select 1
+      from public.game_members member
+      join public.games game on game.id = member.game_id
+      where member.user_id = user_row.id
+        and game.expires_at > now()
+    );
 
   delete from auth.users as user_row
   where user_row.is_anonymous is true
